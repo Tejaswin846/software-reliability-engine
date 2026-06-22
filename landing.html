@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Software - AI Agent Reliability Platform</title>
+    <link rel="stylesheet" href="/landing.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Software</a>
+      <nav class="nav">
+        <a href="/demo">Demo</a>
+        <a href="/developer-docs">Docs</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/login">Login</a>
+        <a class="button" href="/register">Sign Up</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">AI Agent Reliability</p>
+          <h1>Know when your AI agents fail before your users do.</h1>
+          <p class="lead">
+            Software is an observability and reliability layer for agentic systems.
+            It tracks workflows, model calls, tool calls, predictions, guardrails,
+            and recovery signals from your own AI agents.
+          </p>
+          <div class="hero-actions">
+            <a class="button" href="/register">Sign Up</a>
+            <a class="button secondary" href="/demo">View Demo</a>
+            <a class="button secondary" href="/developer-docs">Read the Docs</a>
+          </div>
+        </div>
+
+        <div class="hero-panel" aria-label="Dashboard screenshot preview">
+          <div class="browser-bar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="muted">/dashboard</span>
+          </div>
+          <div class="dashboard-shot">
+            <div class="metric-row">
+              <div class="shot-card"><span>Reliability</span><strong>92</strong></div>
+              <div class="shot-card"><span>Success Rate</span><strong>88%</strong></div>
+              <div class="shot-card"><span>Guardrails</span><strong>31</strong></div>
+            </div>
+            <div class="chart-row">
+              <div class="shot-card">
+                <span>Tool Reliability</span>
+                <div class="bar"><div style="width: 86%"></div></div>
+              </div>
+              <div class="shot-card">
+                <span>Prediction Accuracy</span>
+                <div class="bar"><div style="width: 94%"></div></div>
+              </div>
+              <div class="shot-card">
+                <span>Workflow Health</span>
+                <div class="bar"><div style="width: 78%"></div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>What is Software?</h2>
+        <p class="lead">
+          Software is a developer platform for measuring and improving AI-agent reliability.
+          Developers install the SDK, create a project, generate an API key, and send workflow telemetry
+          from their agents into a hosted reliability dashboard.
+        </p>
+      </section>
+
+      <section class="section">
+        <h2>Why reliability matters</h2>
+        <div class="grid">
+          <article class="card">
+            <h3>Agents fail differently</h3>
+            <p>Real agents fail through tool errors, timeouts, context loss, low confidence, and bad recovery paths.</p>
+          </article>
+          <article class="card">
+            <h3>Simulation is not enough</h3>
+            <p>Software tracks the difference between simulated success and real execution so teams can close the gap.</p>
+          </article>
+          <article class="card">
+            <h3>Guardrails need evidence</h3>
+            <p>Predictions and guardrails become useful when every stage, tool call, model call, and error is recorded.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Features</h2>
+        <div class="grid">
+          <article class="card"><h3>Workflow Tracking</h3><p>Track workflow starts, stages, completions, confidence, and latency.</p></article>
+          <article class="card"><h3>Model and Tool Observability</h3><p>Log model calls, tool calls, failures, result counts, and performance.</p></article>
+          <article class="card"><h3>Prediction and Guardrails</h3><p>Estimate failure probability and receive guardrail recommendations before completion.</p></article>
+          <article class="card"><h3>Multi-User SaaS</h3><p>Create accounts, projects, and hashed API keys for project-scoped agent telemetry.</p></article>
+          <article class="card"><h3>Dashboard Analytics</h3><p>Visualize success rates, failure rates, reliability scores, tool reliability, and trends.</p></article>
+          <article class="card"><h3>SQLite First</h3><p>Start locally with SQLite, then deploy the same FastAPI app to Render, Azure, or Docker.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>SDK example</h2>
+        <div class="code-block">from software_sdk import ReliabilityMonitor
+
+monitor = ReliabilityMonitor(
+    project_name="my-agent",
+    api_url="https://YOUR_SOFTWARE_URL",
+    api_key="sw_..."
+)
+
+with monitor.track_workflow("research-task") as workflow:
+    workflow.track_stage("search", status="completed", success=True, latency_ms=1200, confidence=0.94)
+    workflow.log_tool_call("parallel_search", success=True, latency_ms=1200, result_count=5)
+    workflow.track_stage("generation", status="completed", success=True, latency_ms=5000, confidence=0.91)
+    workflow.log_model_call("llama3.2:3b", success=True, latency_ms=5000, confidence=0.91)
+    workflow.complete(success=True, confidence=0.91)</div>
+      </section>
+
+      <section class="section">
+        <h2>Dashboard screenshots</h2>
+        <div class="grid">
+          <article class="card"><h3>Overview</h3><p>Reliability score, success rate, failure rate, execution time, and confidence.</p></article>
+          <article class="card"><h3>SDK Workflows</h3><p>Recent project-scoped workflows with prediction risk and guardrail action.</p></article>
+          <article class="card"><h3>Tool Reliability</h3><p>Search and extraction reliability compared against model behavior.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Pricing</h2>
+        <article class="card pricing-card">
+          <div>
+            <h3>Developer Preview</h3>
+          <p class="muted">Free, Pro, and Enterprise plans are available as usage-limited SaaS tiers.</p>
+        </div>
+          <a class="button" href="/pricing">View Pricing</a>
+        </article>
+      </section>
+
+      <section class="section">
+        <h2>Start in five minutes</h2>
+        <p class="lead">Create an account, make a project, generate an API key, run an example, and watch the workflow appear in the dashboard.</p>
+        <div class="hero-actions">
+          <a class="button" href="/register">Sign Up</a>
+          <a class="button secondary" href="/docs/quick-start">Quick Start</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">Software - Reliability infrastructure for AI agents</footer>
+  </body>
+</html>

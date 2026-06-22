@@ -1,0 +1,20 @@
+services:
+  software:
+    build: .
+    container_name: software-reliability-engine
+    env_file:
+      - production.env.example
+    environment:
+      SOFTWARE_API_DB_PATH: /app/Software/data/software_reliability.db
+      RELIABILITY_DB_PATH: /app/Software/data/reliability.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./Software/data:/app/Software/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

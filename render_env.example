@@ -1,0 +1,40 @@
+# Render environment variables for Software
+
+SOFTWARE_ENV=production
+
+# Render supplies PORT automatically. Do not hard-code it.
+# PORT=10000
+
+# Required. Software also supports SOFTWARE_JWT_SECRET, but JWT_SECRET is Render-friendly.
+JWT_SECRET=replace-with-a-long-random-secret
+
+# Required permanent Render public URL.
+PUBLIC_BASE_URL=https://software-reliability-engine.onrender.com
+
+# Use the same permanent Render URL when dashboard and API are served together.
+SOFTWARE_ALLOWED_ORIGINS=https://software-reliability-engine.onrender.com
+
+# Optional bootstrap SDK key list for initial SDK tests.
+# Production users should create project API keys from the dashboard.
+SOFTWARE_SDK_API_KEYS=sw_replace_with_initial_render_sdk_key
+SOFTWARE_ENABLE_BOOTSTRAP_DEV_KEY=true
+
+# SQLite paths. Use these with the Render persistent disk mounted at /var/data.
+SOFTWARE_API_DB_PATH=/var/data/software_reliability.db
+RELIABILITY_DB_PATH=/var/data/reliability.db
+
+# Stripe billing. Leave blank until Stripe is configured.
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRO_PRICE_ID=
+STRIPE_ENTERPRISE_PRICE_ID=
+STRIPE_SUCCESS_URL=https://software-reliability-engine.onrender.com/dashboard?checkout=success
+STRIPE_CANCEL_URL=https://software-reliability-engine.onrender.com/pricing?checkout=cancelled
+STRIPE_PORTAL_RETURN_URL=https://software-reliability-engine.onrender.com/dashboard?billing=portal
+
+# Optional custom domain settings once Render custom domains are added.
+SOFTWARE_PRIMARY_HOST=
+SOFTWARE_PRODUCTION_HOSTS=
+SOFTWARE_REDIRECT_HOSTS=
+SOFTWARE_FORCE_HTTPS=true
+SOFTWARE_REDIRECT_WWW=true

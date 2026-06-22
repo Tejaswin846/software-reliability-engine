@@ -1,0 +1,44 @@
+# Local secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Build/package outputs
+build/
+dist/
+*.egg-info/
+
+# Runtime data
+data/
+logs/
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Local artifacts and generated archives
+artifacts/
+*.tar.gz
+*.zip
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local separation bookkeeping
+separation_moved_files.txt

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Register - Software</title>
+    <link rel="stylesheet" href="/saas.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <p class="brand"><span>Software</span><strong>Create Account</strong></p>
+      <nav class="nav">
+        <a href="/login">Login</a>
+        <a href="/dashboard">Dashboard</a>
+      </nav>
+    </header>
+    <main class="shell">
+      <section class="panel stack">
+        <h1>Create your Software account</h1>
+        <p class="muted">Each account owns projects, API keys, and SDK-submitted workflows.</p>
+        <form id="register-form" class="stack">
+          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Password <input name="password" type="password" autocomplete="new-password" minlength="8" required></label>
+          <button type="submit">Create account</button>
+        </form>
+        <div id="register-message" class="message"></div>
+      </section>
+    </main>
+    <script src="/saas.js"></script>
+  </body>
+</html>

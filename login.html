@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Login - Software</title>
+    <link rel="stylesheet" href="/saas.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <p class="brand"><span>Software</span><strong>Login</strong></p>
+      <nav class="nav">
+        <a href="/register">Create account</a>
+        <a href="/dashboard">Dashboard</a>
+      </nav>
+    </header>
+    <main class="shell">
+      <section class="panel stack">
+        <h1>Welcome back</h1>
+        <p class="muted">Sign in to manage projects, API keys, and agent telemetry.</p>
+        <form id="login-form" class="stack">
+          <label>Email <input name="email" type="email" autocomplete="email" required></label>
+          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
+          <button type="submit">Login</button>
+        </form>
+        <div id="login-message" class="message"></div>
+      </section>
+    </main>
+    <script src="/saas.js"></script>
+  </body>
+</html>

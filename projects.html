@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Projects - Software</title>
+    <link rel="stylesheet" href="/saas.css">
+  </head>
+  <body data-requires-auth="true">
+    <header class="topbar">
+      <p class="brand"><span>Software</span><strong>Projects</strong></p>
+      <nav class="nav">
+        <span id="user-label" class="muted">--</span>
+        <a href="/dashboard">Dashboard</a>
+        <a href="/api-keys">API Keys</a>
+        <button id="logout-button" class="secondary">Logout</button>
+      </nav>
+    </header>
+    <main class="shell stack">
+      <section class="panel stack">
+        <h1>Projects</h1>
+        <p class="muted">Create one project for each agent app, team, or customer environment.</p>
+        <form id="project-form" class="row">
+          <label style="flex: 1">Project Name <input name="name" required placeholder="my-agent-prod"></label>
+          <button type="submit">Create Project</button>
+        </form>
+        <div id="project-message" class="message"></div>
+      </section>
+      <section id="project-list" class="card-list"></section>
+    </main>
+    <script src="/saas.js"></script>
+  </body>
+</html>

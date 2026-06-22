@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Software Reliability Dashboard</title>
+    <link rel="stylesheet" href="/dashboard.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Software Project</p>
+        <h1>Reliability Dashboard</h1>
+      </div>
+      <div class="topbar-actions">
+        <a href="/projects">Projects</a>
+        <a href="/api-keys">API Keys</a>
+        <a href="/login" id="auth-link">Login</a>
+        <div class="status-pill" id="dashboard-status">Loading reliability data...</div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="panel">
+        <div class="section-header">
+          <h2>Overview</h2>
+          <span id="last-updated" class="muted">--</span>
+        </div>
+        <div class="metric-grid">
+          <article class="metric">
+            <span>Total Benchmark Runs</span>
+            <strong id="total-runs">--</strong>
+          </article>
+          <article class="metric">
+            <span>Total Workflows</span>
+            <strong id="total-workflows">--</strong>
+          </article>
+          <article class="metric">
+            <span>Success Rate</span>
+            <strong id="success-rate">--</strong>
+          </article>
+          <article class="metric">
+            <span>Failure Rate</span>
+            <strong id="failure-rate">--</strong>
+          </article>
+          <article class="metric score">
+            <span>Reliability Score</span>
+            <strong id="reliability-score">--</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Usage & Billing</h2>
+          <a class="small-link" href="/pricing">Upgrade</a>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Current Plan</span>
+            <strong id="billing-plan">--</strong>
+          </article>
+          <article class="metric">
+            <span>Monthly Workflows</span>
+            <strong id="billing-workflows">--</strong>
+          </article>
+          <article class="metric">
+            <span>Remaining Quota</span>
+            <strong id="billing-remaining">--</strong>
+          </article>
+          <article class="metric">
+            <span>API Requests</span>
+            <strong id="billing-api-requests">--</strong>
+          </article>
+          <article class="metric">
+            <span>Stripe Status</span>
+            <strong id="billing-stripe-status">--</strong>
+          </article>
+          <article class="metric">
+            <span>Invoices</span>
+            <strong id="billing-invoices">--</strong>
+          </article>
+        </div>
+        <div class="billing-actions">
+          <button id="billing-upgrade-pro" type="button">Upgrade to Pro</button>
+          <button id="billing-portal" type="button" class="secondary">Manage / Downgrade</button>
+        </div>
+        <p id="billing-note" class="muted billing-note">Login to see project-scoped plan and usage data.</p>
+        <div id="billing-invoice-list" class="bar-list billing-invoice-list"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Team Management</h2>
+          <span class="muted">Organizations, members, and invitations</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Organizations</span>
+            <strong id="team-org-count">--</strong>
+          </article>
+          <article class="metric">
+            <span>Members</span>
+            <strong id="team-member-count">--</strong>
+          </article>
+          <article class="metric">
+            <span>Pending Invites</span>
+            <strong id="team-invite-count">--</strong>
+          </article>
+        </div>
+        <div class="split team-split">
+          <div>
+            <h3>Organizations</h3>
+            <div id="team-orgs" class="bar-list"></div>
+          </div>
+          <div>
+            <h3>Invitations</h3>
+            <div id="team-invitations" class="bar-list"></div>
+          </div>
+        </div>
+        <h3>Member List</h3>
+        <div class="table-wrap team-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Organization</th>
+                <th>Email</th>
+                <th>Role</th>
+                <th>Joined</th>
+              </tr>
+            </thead>
+            <tbody id="team-members-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Model Leaderboard</h2>
+          <span class="muted">Ranked by Reliability Score V2</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Model</th>
+                <th>Reliability</th>
+                <th>Success</th>
+                <th>Avg Latency</th>
+                <th>Confidence</th>
+              </tr>
+            </thead>
+            <tbody id="model-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Tool Reliability</h2>
+          <span class="muted">External tool benchmark</span>
+        </div>
+        <div class="tool-grid" id="tool-grid"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Workflow Analytics</h2>
+          <span id="workflow-summary" class="muted">--</span>
+        </div>
+        <div class="split">
+          <div>
+            <h3>Stage Failure Breakdown</h3>
+            <div id="stage-failures" class="bar-list"></div>
+          </div>
+          <div>
+            <h3>Stage Latency Breakdown</h3>
+            <div id="stage-latency" class="bar-list"></div>
+          </div>
+        </div>
+        <h3>Confidence Drop Analysis</h3>
+        <div id="confidence-drops" class="drop-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Prediction Analytics</h2>
+          <span class="muted">Failure prediction quality</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Accuracy</span>
+            <strong id="prediction-accuracy">--</strong>
+          </article>
+          <article class="metric">
+            <span>Precision</span>
+            <strong id="prediction-precision">--</strong>
+          </article>
+          <article class="metric">
+            <span>Recall</span>
+            <strong id="prediction-recall">--</strong>
+          </article>
+          <article class="metric">
+            <span>False Positives</span>
+            <strong id="prediction-fp">--</strong>
+          </article>
+          <article class="metric">
+            <span>False Negatives</span>
+            <strong id="prediction-fn">--</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Guardrail Analytics</h2>
+          <span class="muted">Preventive reliability layer</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Interventions</span>
+            <strong id="guardrail-interventions">--</strong>
+          </article>
+          <article class="metric">
+            <span>Prevented Failures</span>
+            <strong id="guardrail-prevented">--</strong>
+          </article>
+          <article class="metric">
+            <span>Recovery Success</span>
+            <strong id="guardrail-recovery">--</strong>
+          </article>
+          <article class="metric">
+            <span>Recovery Latency</span>
+            <strong id="guardrail-latency">--</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Auto-Recovery</h2>
+          <span class="muted">Automatic failure correction</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Recoveries Today</span>
+            <strong id="recovery-today">--</strong>
+          </article>
+          <article class="metric">
+            <span>Recovery Success</span>
+            <strong id="recovery-success">--</strong>
+          </article>
+          <article class="metric">
+            <span>Avg Recovery Latency</span>
+            <strong id="recovery-latency">--</strong>
+          </article>
+        </div>
+        <h3>Top Failure Categories</h3>
+        <div id="recovery-categories" class="bar-list"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Reliability Copilot</h2>
+          <span class="muted">Optimization guidance from reliability data</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Recommendations</span>
+            <strong id="copilot-count">--</strong>
+          </article>
+          <article class="metric">
+            <span>Avg Confidence</span>
+            <strong id="copilot-confidence">--</strong>
+          </article>
+          <article class="metric">
+            <span>Est. Improvement</span>
+            <strong id="copilot-improvement">--</strong>
+          </article>
+        </div>
+        <div class="table-wrap copilot-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Issue</th>
+                <th>Recommendation</th>
+                <th>Expected Improvement</th>
+                <th>Confidence</th>
+                <th>Evidence</th>
+              </tr>
+            </thead>
+            <tbody id="copilot-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Autonomous Optimizer</h2>
+          <span class="muted">Automatic reliability improvements with rollback</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>Autonomous Actions</span>
+            <strong id="optimizer-actions">--</strong>
+          </article>
+          <article class="metric">
+            <span>Success Improvement</span>
+            <strong id="optimizer-improvement">--</strong>
+          </article>
+          <article class="metric">
+            <span>Rollbacks</span>
+            <strong id="optimizer-rollbacks">--</strong>
+          </article>
+          <article class="metric">
+            <span>Dry Runs</span>
+            <strong id="optimizer-dryruns">--</strong>
+          </article>
+          <article class="metric">
+            <span>Applied Actions</span>
+            <strong id="optimizer-applied">--</strong>
+          </article>
+          <article class="metric">
+            <span>Avg Confidence</span>
+            <strong id="optimizer-confidence">--</strong>
+          </article>
+        </div>
+        <h3>Optimization History</h3>
+        <div class="table-wrap optimizer-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Action</th>
+                <th>Target</th>
+                <th>Status</th>
+                <th>Expected Improvement</th>
+                <th>Confidence</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="optimizer-history-table"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Meta-Reliability</h2>
+          <span class="muted">Safety checks for Software's own AI decisions</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>AI Decisions</span>
+            <strong id="meta-decisions">--</strong>
+          </article>
+          <article class="metric">
+            <span>Pending Human Approval</span>
+            <strong id="meta-pending">--</strong>
+          </article>
+          <article class="metric">
+            <span>Rejected Unsafe Actions</span>
+            <strong id="meta-rejected">--</strong>
+          </article>
+          <article class="metric">
+            <span>Approved Decisions</span>
+            <strong id="meta-approved">--</strong>
+          </article>
+          <article class="metric">
+            <span>High Risk</span>
+            <strong id="meta-high-risk">--</strong>
+          </article>
+        </div>
+        <div class="split">
+          <div>
+            <h3>Verification Status</h3>
+            <div class="table-wrap optimizer-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Action</th>
+                    <th>Risk</th>
+                    <th>Status</th>
+                    <th>Confidence</th>
+                    <th>Created</th>
+                  </tr>
+                </thead>
+                <tbody id="meta-decision-table"></tbody>
+              </table>
+            </div>
+          </div>
+          <div>
+            <h3>Rejected Unsafe Actions</h3>
+            <div id="meta-rejected-list" class="bar-list"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Historical Trends</h2>
+          <span class="muted">Reliability, success, and failure over time</span>
+        </div>
+        <div id="trend-list" class="trend-list"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>SDK Workflows</h2>
+          <span class="muted">External agent telemetry submitted through Software SDK</span>
+        </div>
+        <div class="metric-grid tight">
+          <article class="metric">
+            <span>SDK Workflows</span>
+            <strong id="sdk-total">--</strong>
+          </article>
+          <article class="metric">
+            <span>SDK Success Rate</span>
+            <strong id="sdk-success">--</strong>
+          </article>
+          <article class="metric">
+            <span>SDK Avg Latency</span>
+            <strong id="sdk-latency">--</strong>
+          </article>
+        </div>
+        <div class="table-wrap sdk-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Project</th>
+                <th>Workflow</th>
+                <th>Status</th>
+                <th>Success</th>
+                <th>Risk</th>
+                <th>Guardrail</th>
+                <th>Latency</th>
+              </tr>
+            </thead>
+            <tbody id="sdk-workflow-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/dashboard.js"></script>
+  </body>
+</html>

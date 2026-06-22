@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>API Keys - Software</title>
+    <link rel="stylesheet" href="/saas.css">
+  </head>
+  <body data-requires-auth="true">
+    <header class="topbar">
+      <p class="brand"><span>Software</span><strong>API Keys</strong></p>
+      <nav class="nav">
+        <span id="user-label" class="muted">--</span>
+        <a href="/projects">Projects</a>
+        <a href="/dashboard">Dashboard</a>
+        <button id="logout-button" class="secondary">Logout</button>
+      </nav>
+    </header>
+    <main class="shell stack">
+      <section class="panel stack">
+        <h1>Project API Keys</h1>
+        <p class="muted">API keys are shown once. Store them in your agent environment variables.</p>
+        <div class="row">
+          <label style="flex: 1">Project <select id="project-select"></select></label>
+          <button id="create-key-button" type="button">Create API Key</button>
+        </div>
+        <div id="api-key-message" class="message"></div>
+        <div id="new-api-key" class="key-box">New API keys will appear here once.</div>
+      </section>
+      <section class="panel">
+        <table>
+          <thead>
+            <tr>
+              <th>Prefix</th>
+              <th>Status</th>
+              <th>Created</th>
+              <th>Last Used</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="api-key-table"></tbody>
+        </table>
+      </section>
+    </main>
+    <script src="/saas.js"></script>
+  </body>
+</html>

@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Software Demo - AI Agent Reliability</title>
+    <link rel="stylesheet" href="/landing.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">Software</a>
+      <nav class="nav">
+        <a href="/developer-docs">Docs</a>
+        <a href="/pricing">Pricing</a>
+        <a href="/dashboard">Dashboard</a>
+        <a class="button" href="#request-access">Request Access</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">Customer Validation Demo</p>
+          <h1>Reliability monitoring for real AI-agent workflows.</h1>
+          <p class="lead">
+            Software helps developers see where agents fail, track tool and model reliability,
+            predict failures, and apply guardrails before workflows break in production.
+          </p>
+          <div class="hero-actions">
+            <a class="button" href="#request-access">Request Access</a>
+            <a class="button secondary" href="/docs/quick-start">Quickstart</a>
+          </div>
+        </div>
+        <div class="hero-panel">
+          <div class="browser-bar">
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="dot"></span>
+            <span class="muted">Demo project: support-agent-prod</span>
+          </div>
+          <div class="dashboard-shot">
+            <div class="metric-row">
+              <div class="shot-card"><span>Workflows</span><strong>10k</strong></div>
+              <div class="shot-card"><span>Failures Caught</span><strong>421</strong></div>
+              <div class="shot-card"><span>Guardrails</span><strong>117</strong></div>
+            </div>
+            <div class="chart-row">
+              <div class="shot-card"><span>Search Tool</span><div class="bar"><div style="width: 91%"></div></div></div>
+              <div class="shot-card"><span>Model Calls</span><div class="bar"><div style="width: 84%"></div></div></div>
+              <div class="shot-card"><span>Workflow Health</span><div class="bar"><div style="width: 88%"></div></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Why Software?</h2>
+        <p class="lead">
+          AI agents are moving from demos into real business workflows. Once agents call tools,
+          make plans, retry work, and route outputs to other systems, reliability becomes the product.
+          Software gives teams the operating layer for measuring that reliability.
+        </p>
+      </section>
+
+      <section class="section">
+        <h2>Key Features</h2>
+        <div class="grid">
+          <article class="card"><h3>Workflow telemetry</h3><p>Track every workflow, stage, completion, confidence score, and latency.</p></article>
+          <article class="card"><h3>Tool reliability</h3><p>Separate model failures from search, extraction, endpoint, timeout, and parsing failures.</p></article>
+          <article class="card"><h3>Guardrails</h3><p>Predict failure probability and recommend continue, retry, observe, or escalate actions.</p></article>
+          <article class="card"><h3>Projects and API keys</h3><p>Give each agent app its own project-scoped API key and dashboard data.</p></article>
+          <article class="card"><h3>Usage plans</h3><p>Free, Pro, and Enterprise limits are tracked with billing-ready usage records.</p></article>
+          <article class="card"><h3>Developer SDK</h3><p>Instrument Python agents with a few lines of code and no external APIs required.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>How It Works</h2>
+        <div class="grid">
+          <article class="card"><h3>1. Create project</h3><p>Register, create a project, and generate a hashed API key.</p></article>
+          <article class="card"><h3>2. Install SDK</h3><p>Install the Python SDK and add telemetry around workflows, stages, model calls, and tool calls.</p></article>
+          <article class="card"><h3>3. Watch reliability</h3><p>Use the dashboard to see usage, failures, predictions, and guardrail outcomes.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Quickstart</h2>
+        <div class="code-block">pip install software-sdk
+
+set SOFTWARE_API_URL=https://YOUR_SOFTWARE_URL
+set SOFTWARE_API_KEY=sw_your_key
+python examples/simple_agent.py</div>
+        <p class="muted">A developer should be able to create a project, generate an API key, run an example, and see a workflow in the dashboard within five minutes.</p>
+      </section>
+
+      <section class="section">
+        <h2>Pricing</h2>
+        <div class="grid">
+          <article class="card"><h3>Free</h3><p>1 project, 1 API key, 1,000 workflows/month.</p></article>
+          <article class="card"><h3>Pro</h3><p>20 projects, 50 API keys, 100,000 workflows/month.</p></article>
+          <article class="card"><h3>Enterprise</h3><p>Unlimited projects and API keys with custom workflow limits.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2>Early Adopter Program</h2>
+        <div class="grid">
+          <article class="card"><h3>Who it is for</h3><p>Developers building tool-using AI agents, multi-agent workflows, or production AI automation.</p></article>
+          <article class="card"><h3>What you get</h3><p>Early access, onboarding help, direct feedback loop, and influence over the reliability roadmap.</p></article>
+          <article class="card"><h3>What we measure</h3><p>Signups, project creations, API key generations, SDK installations, and active workflow telemetry.</p></article>
+        </div>
+      </section>
+
+      <section class="section" id="request-access">
+        <h2>Request Access</h2>
+        <p class="lead">Tell us what kind of agent workflow you want to monitor. This helps validate whether developers actually want Software.</p>
+        <form id="request-access-form" class="request-form">
+          <label>Name <input name="name" required></label>
+          <label>Email <input name="email" type="email" required></label>
+          <label>Company <input name="company"></label>
+          <label>Role <input name="role"></label>
+          <label>Expected workflows/month <input name="expected_workflows_per_month" type="number" min="0"></label>
+          <label>Timeline
+            <select name="timeline">
+              <option value="">Select one</option>
+              <option value="now">Now</option>
+              <option value="this_month">This month</option>
+              <option value="this_quarter">This quarter</option>
+              <option value="exploring">Exploring</option>
+            </select>
+          </label>
+          <label class="full">Use case <textarea name="use_case" required minlength="10" rows="5" placeholder="What kind of AI-agent workflow do you want to monitor?"></textarea></label>
+          <button class="button" type="submit">Request Access</button>
+        </form>
+        <p id="request-access-message" class="form-message"></p>
+      </section>
+    </main>
+
+    <script src="/validation.js"></script>
+  </body>
+</html>
