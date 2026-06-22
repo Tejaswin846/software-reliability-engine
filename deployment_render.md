@@ -1,11 +1,11 @@
-# Render Deployment Guide
+﻿# Render Deployment Guide
 
 ## Goal
 
 Deploy Software on Render with a stable public URL:
 
 ```text
-https://software-reliability-engine.onrender.com
+https://software-platform.onrender.com
 ```
 
 Only the Render Web Service URL is valid for Phase 26 verification.
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 Start command:
 
 ```bash
-uvicorn Software.app:app --host 0.0.0.0 --port $PORT
+uvicorn app:app --host 0.0.0.0 --port $PORT
 ```
 
 Render provides `PORT` automatically. Software also defaults to port `8000` when run outside Render.
@@ -39,8 +39,8 @@ Render provides `PORT` automatically. Software also defaults to port `8000` when
 The `render.yaml` blueprint creates:
 
 ```text
-Service name: software-reliability-engine
-Public URL: https://software-reliability-engine.onrender.com
+Service name: software-platform
+Public URL: https://software-platform.onrender.com
 Persistent disk: /var/data
 ```
 
@@ -72,8 +72,8 @@ Set these in Render:
 ```text
 SOFTWARE_ENV=production
 JWT_SECRET=replace-with-a-long-random-secret
-PUBLIC_BASE_URL=https://software-reliability-engine.onrender.com
-SOFTWARE_ALLOWED_ORIGINS=https://software-reliability-engine.onrender.com
+PUBLIC_BASE_URL=https://software-platform.onrender.com
+SOFTWARE_ALLOWED_ORIGINS=https://software-platform.onrender.com
 SOFTWARE_API_DB_PATH=/var/data/software_reliability.db
 RELIABILITY_DB_PATH=/var/data/reliability.db
 SOFTWARE_SDK_API_KEYS=sw_replace_with_initial_render_sdk_key
@@ -129,7 +129,7 @@ pip install -r requirements.txt
 5. Confirm start command:
 
 ```bash
-uvicorn Software.app:app --host 0.0.0.0 --port $PORT
+uvicorn app:app --host 0.0.0.0 --port $PORT
 ```
 
 6. Set health check path:
@@ -152,16 +152,16 @@ uvicorn Software.app:app --host 0.0.0.0 --port $PORT
 Verify only against the Render URL:
 
 ```bash
-curl -I https://software-reliability-engine.onrender.com/
-curl -I https://software-reliability-engine.onrender.com/health
-curl -I https://software-reliability-engine.onrender.com/status
-curl -I https://software-reliability-engine.onrender.com/metrics
-curl -I https://software-reliability-engine.onrender.com/dashboard
-curl -I https://software-reliability-engine.onrender.com/login
-curl -I https://software-reliability-engine.onrender.com/register
-curl -I https://software-reliability-engine.onrender.com/pricing
-curl -I https://software-reliability-engine.onrender.com/api/dashboard
-curl -I https://software-reliability-engine.onrender.com/api/billing/plans
+curl -I https://software-platform.onrender.com/
+curl -I https://software-platform.onrender.com/health
+curl -I https://software-platform.onrender.com/status
+curl -I https://software-platform.onrender.com/metrics
+curl -I https://software-platform.onrender.com/dashboard
+curl -I https://software-platform.onrender.com/login
+curl -I https://software-platform.onrender.com/register
+curl -I https://software-platform.onrender.com/pricing
+curl -I https://software-platform.onrender.com/api/dashboard
+curl -I https://software-platform.onrender.com/api/billing/plans
 ```
 
 Expected:
@@ -185,7 +185,7 @@ from software_sdk import ReliabilityMonitor
 
 monitor = ReliabilityMonitor(
     project_name="render-smoke-test",
-    api_url="https://software-reliability-engine.onrender.com",
+    api_url="https://software-platform.onrender.com",
     api_key="sw_your_project_api_key"
 )
 ```
@@ -197,5 +197,6 @@ Run one workflow and confirm it appears in the dashboard.
 Render free tier services may sleep after inactivity, so the first request can be slow. The public URL remains permanent:
 
 ```text
-https://software-reliability-engine.onrender.com
+https://software-platform.onrender.com
 ```
+

@@ -1,11 +1,11 @@
-# Render Deployment Report
+﻿# Render Deployment Report
 
 ## Phase 26 Goal
 
 Deploy Software on Render with a stable permanent Render public URL:
 
 ```text
-https://software-reliability-engine.onrender.com
+https://software-platform.onrender.com
 ```
 
 Only the Render Web Service URL is valid for Phase 26 verification.
@@ -61,7 +61,7 @@ pip install -r requirements.txt
 Start command:
 
 ```bash
-uvicorn Software.app:app --host 0.0.0.0 --port $PORT
+uvicorn app:app --host 0.0.0.0 --port $PORT
 ```
 
 Health check path:
@@ -77,14 +77,14 @@ Render provides `PORT`. Software defaults to port `8000` outside Render.
 Target URL:
 
 ```text
-https://software-reliability-engine.onrender.com
+https://software-platform.onrender.com
 ```
 
 Set:
 
 ```text
-PUBLIC_BASE_URL=https://software-reliability-engine.onrender.com
-SOFTWARE_ALLOWED_ORIGINS=https://software-reliability-engine.onrender.com
+PUBLIC_BASE_URL=https://software-platform.onrender.com
+SOFTWARE_ALLOWED_ORIGINS=https://software-platform.onrender.com
 ```
 
 If Render generates a different service slug, update every URL to the actual final `.onrender.com` URL.
@@ -94,8 +94,8 @@ If Render generates a different service slug, update every URL to the actual fin
 ```text
 SOFTWARE_ENV=production
 JWT_SECRET=replace-with-a-long-random-secret
-PUBLIC_BASE_URL=https://software-reliability-engine.onrender.com
-SOFTWARE_ALLOWED_ORIGINS=https://software-reliability-engine.onrender.com
+PUBLIC_BASE_URL=https://software-platform.onrender.com
+SOFTWARE_ALLOWED_ORIGINS=https://software-platform.onrender.com
 SOFTWARE_API_DB_PATH=/var/data/software_reliability.db
 RELIABILITY_DB_PATH=/var/data/reliability.db
 SOFTWARE_SDK_API_KEYS=sw_replace_with_initial_render_sdk_key
@@ -123,16 +123,16 @@ Without persistent disk, SQLite data may reset after deploys, restarts, or insta
 These must be checked against the final Render URL only:
 
 ```text
-https://software-reliability-engine.onrender.com/
-https://software-reliability-engine.onrender.com/health
-https://software-reliability-engine.onrender.com/status
-https://software-reliability-engine.onrender.com/metrics
-https://software-reliability-engine.onrender.com/dashboard
-https://software-reliability-engine.onrender.com/login
-https://software-reliability-engine.onrender.com/register
-https://software-reliability-engine.onrender.com/pricing
-https://software-reliability-engine.onrender.com/api/dashboard
-https://software-reliability-engine.onrender.com/api/billing/plans
+https://software-platform.onrender.com/
+https://software-platform.onrender.com/health
+https://software-platform.onrender.com/status
+https://software-platform.onrender.com/metrics
+https://software-platform.onrender.com/dashboard
+https://software-platform.onrender.com/login
+https://software-platform.onrender.com/register
+https://software-platform.onrender.com/pricing
+https://software-platform.onrender.com/api/dashboard
+https://software-platform.onrender.com/api/billing/plans
 ```
 
 ## Verification Status
@@ -262,3 +262,4 @@ render_env.example
 ```
 
 Do not overwrite the existing Nexora app unless that is explicitly intended.
+

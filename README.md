@@ -1,4 +1,4 @@
-# Software
+﻿# Software
 
 Software is an AI-agent reliability platform.
 
@@ -63,7 +63,7 @@ Run the backend:
 
 ```bash
 pip install -r requirements.txt
-uvicorn Software.app:app --host 127.0.0.1 --port 8300
+uvicorn app:app --host 127.0.0.1 --port 8300
 ```
 
 Open:
@@ -263,3 +263,4 @@ RELIABILITY_DB_PATH=/app/Software/data/reliability.db
 ```
 
 See [deployment.md](deployment.md) for deployment details.
+

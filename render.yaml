@@ -1,15 +1,12 @@
 services:
   - type: web
-    name: software-reliability-engine
-    runtime: python
-    plan: starter
+    name: software-platform
+    env: python
+    plan: free
+    rootDir: .
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn Software.app:app --host 0.0.0.0 --port $PORT
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
-    disk:
-      name: software-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: SOFTWARE_ENV
         value: production
@@ -17,14 +14,10 @@ services:
         value: 3.12.4
       - key: JWT_SECRET
         generateValue: true
-      - key: SOFTWARE_API_DB_PATH
-        value: /var/data/software_reliability.db
-      - key: RELIABILITY_DB_PATH
-        value: /var/data/reliability.db
       - key: PUBLIC_BASE_URL
-        value: https://software-reliability-engine.onrender.com
+        value: https://software-platform.onrender.com
       - key: SOFTWARE_ALLOWED_ORIGINS
-        value: https://software-reliability-engine.onrender.com
+        value: https://software-platform.onrender.com
       - key: SOFTWARE_SDK_API_KEYS
         sync: false
       - key: STRIPE_SECRET_KEY
