@@ -23,6 +23,16 @@ pip install -e .
 
 The SDK uses only Python standard libraries.
 
+For normal SDK installation:
+
+```bash
+pip install software-sdk
+software login
+software init
+software test
+software status
+```
+
 ## API Key
 
 The development API key is:
@@ -40,7 +50,7 @@ SOFTWARE_SDK_API_KEYS
 Example:
 
 ```bash
-SOFTWARE_SDK_API_KEYS=dev-key,team-key uvicorn Software.app:app --host 0.0.0.0 --port 8300
+SOFTWARE_SDK_API_KEYS=dev-key,team-key uvicorn app:app --host 0.0.0.0 --port 8300
 ```
 
 All SDK requests must send:

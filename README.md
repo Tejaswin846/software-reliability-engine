@@ -49,7 +49,10 @@ Install the SDK:
 
 ```bash
 pip install software-sdk
-python -m software_sdk
+software login
+software init
+software test
+software status
 ```
 
 For local development from this repo:
@@ -77,21 +80,24 @@ Then:
 1. Create an account at `/register`
 2. Create a project at `/projects`
 3. Generate an API key at `/api-keys`
-4. Run an example
-5. Open `/dashboard`
+4. Install the SDK with `pip install software-sdk`
+5. Run `software login`
+6. Run `software init`
+7. Run `software test`
+8. Open `/dashboard`
 
 Example:
 
 ```bash
-set SOFTWARE_API_URL=http://127.0.0.1:8300
-set SOFTWARE_API_KEY=sw_your_key
-python examples/simple_agent.py
+software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent
+software init
+software test
 ```
 
 Track SDK installation analytics:
 
 ```bash
-python -m software_sdk
+python -m software_sdk status
 ```
 
 ## Basic SDK Usage
@@ -130,6 +136,8 @@ with monitor.track_workflow("research-task") as workflow:
 ## Documentation
 
 - [QUICKSTART.md](QUICKSTART.md)
+- [INSTALL.md](INSTALL.md)
+- [SDK_CLI_GUIDE.md](SDK_CLI_GUIDE.md)
 - [DOCS.md](DOCS.md)
 - [authentication.md](authentication.md)
 - [api_key_management.md](api_key_management.md)

@@ -12,6 +12,7 @@
       <nav class="nav">
         <a href="/demo">Demo</a>
         <a href="/developer-docs">Docs</a>
+        <a href="/onboarding">Onboarding</a>
         <a href="/pricing">Pricing</a>
         <a href="/dashboard">Dashboard</a>
         <a href="/login">Login</a>
@@ -108,6 +109,15 @@
 
       <section class="section">
         <h2>SDK example</h2>
+        <p class="lead">Install the SDK, connect your project, then send a test workflow.</p>
+        <div class="code-block">pip install software-sdk
+software login
+software init
+software test</div>
+      </section>
+
+      <section class="section">
+        <h2>Track a workflow</h2>
         <div class="code-block">from software_sdk import ReliabilityMonitor
 
 monitor = ReliabilityMonitor(
@@ -149,6 +159,7 @@ with monitor.track_workflow("research-task") as workflow:
         <p class="lead">Create an account, make a project, generate an API key, run an example, and watch the workflow appear in the dashboard.</p>
         <div class="hero-actions">
           <a class="button" href="/register">Sign Up</a>
+          <a class="button secondary" href="/onboarding">Onboarding</a>
           <a class="button secondary" href="/docs/quick-start">Quick Start</a>
         </div>
       </section>

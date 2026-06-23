@@ -4174,6 +4174,7 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "landing.css": BASE_DIR / "landing.css",
         "pricing.html": BASE_DIR / "pricing.html",
         "demo.html": BASE_DIR / "demo.html",
+        "onboarding.html": BASE_DIR / "onboarding.html",
         "validation.js": BASE_DIR / "validation.js",
         "dashboard.html": BASE_DIR / "dashboard.html",
         "dashboard.css": BASE_DIR / "dashboard.css",
@@ -4369,6 +4370,11 @@ def pricing_page() -> FileResponse:
 @app.get("/demo", include_in_schema=False)
 def demo_page() -> FileResponse:
     return FileResponse(BASE_DIR / "demo.html")
+
+
+@app.get("/onboarding", include_in_schema=False)
+def onboarding_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "onboarding.html")
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -5489,6 +5495,28 @@ def api_dashboard_historical_trends() -> Dict[str, Any]:
 @app.get("/api/dashboard/sdk-workflows")
 def api_dashboard_sdk_workflows() -> Dict[str, Any]:
     return {"ok": True, "sdk_workflows": dashboard_sdk_payload()}
+
+
+@app.get("/api/sdk/status")
+def sdk_status(api_key_context: Dict[str, Any] = Depends(require_sdk_api_key)) -> Dict[str, Any]:
+    base_url = PUBLIC_BASE_URL or ""
+    return {
+        "ok": True,
+        "service": APP_NAME,
+        "version": APP_VERSION,
+        "environment": ENVIRONMENT,
+        "project": {
+            "id": api_key_context["project_id"],
+            "name": api_key_context["project_name"],
+        },
+        "api_key": {
+            "id": api_key_context["api_key_id"],
+            "prefix": api_key_context["key_prefix"],
+            "last_used_at": api_key_context["last_used_at"],
+        },
+        "dashboard_url": f"{base_url}/dashboard" if base_url else "/dashboard",
+        "onboarding_url": f"{base_url}/onboarding" if base_url else "/onboarding",
+    }
 
 
 @app.post("/api/sdk/workflows/start")

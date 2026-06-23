@@ -8,7 +8,10 @@ For normal SDK use:
 
 ```bash
 pip install software-sdk
-python -m software_sdk
+software login
+software init
+software test
+software status
 ```
 
 For local development from this repository:
@@ -16,14 +19,14 @@ For local development from this repository:
 ```bash
 python -m pip install --upgrade pip
 pip install -e .
-python -m software_sdk
+software --help
 ```
 
 ## 2. Start Software
 
 ```bash
 pip install -r requirements.txt
-uvicorn Software.app:app --host 127.0.0.1 --port 8300
+uvicorn app:app --host 127.0.0.1 --port 8300
 ```
 
 Open:
@@ -68,22 +71,24 @@ Select your project and create an API key.
 
 Copy the full key immediately. Software only shows it once.
 
-## 6. Run Example Agent
+## 6. Connect the SDK
 
 PowerShell:
 
 ```powershell
-$env:SOFTWARE_API_URL="http://127.0.0.1:8300"
-$env:SOFTWARE_API_KEY="sw_your_key"
-python examples/simple_agent.py
+software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent-dev
+software init
+software test
+software status
 ```
 
 Command Prompt:
 
 ```bat
-set SOFTWARE_API_URL=http://127.0.0.1:8300
-set SOFTWARE_API_KEY=sw_your_key
-python examples/simple_agent.py
+software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent-dev
+software init
+software test
+software status
 ```
 
 ## 7. View Dashboard
@@ -107,7 +112,7 @@ python examples/multi_step_workflow.py
 ## Expected Output
 
 ```text
-Simple workflow sent to Software.
+Software test workflow sent.
 ```
 
 ## Common Issues

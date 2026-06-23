@@ -4,13 +4,21 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "software-sdk"
-version = "0.1.0"
+version = "0.2.0"
 description = "Python SDK for Software AI-agent reliability monitoring."
 requires-python = ">=3.10"
 readme = "SDK_INTEGRATION_GUIDE.md"
 authors = [
   { name = "Software Reliability Engine" }
 ]
+dependencies = []
+
+[project.scripts]
+software = "software_sdk.cli:main"
+
+[project.urls]
+Homepage = "https://software-platform.onrender.com"
+Documentation = "https://software-platform.onrender.com/developer-docs"
 
 [tool.setuptools.packages.find]
 include = ["software_sdk*"]
