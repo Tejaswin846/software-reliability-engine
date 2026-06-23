@@ -1500,6 +1500,12 @@ class SDKRecoveryRequest(BaseModel):
     auto_apply: bool = True
 
 
+class SDKTestWorkflowRequest(BaseModel):
+    project_name: Optional[str] = Field(None, max_length=160)
+    workflow_name: str = Field("install-page-test", min_length=1, max_length=220)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
 class OptimizerRunRequest(BaseModel):
     dry_run: bool = True
     min_confidence: float = Field(90.0, ge=0, le=100)
@@ -4175,6 +4181,9 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "pricing.html": BASE_DIR / "pricing.html",
         "demo.html": BASE_DIR / "demo.html",
         "onboarding.html": BASE_DIR / "onboarding.html",
+        "install.html": BASE_DIR / "install.html",
+        "install_software_sdk.bat": BASE_DIR / "install_software_sdk.bat",
+        "install_software_sdk.ps1": BASE_DIR / "install_software_sdk.ps1",
         "validation.js": BASE_DIR / "validation.js",
         "dashboard.html": BASE_DIR / "dashboard.html",
         "dashboard.css": BASE_DIR / "dashboard.css",
@@ -4375,6 +4384,29 @@ def demo_page() -> FileResponse:
 @app.get("/onboarding", include_in_schema=False)
 def onboarding_page() -> FileResponse:
     return FileResponse(BASE_DIR / "onboarding.html")
+
+
+@app.get("/install", include_in_schema=False)
+def install_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "install.html")
+
+
+@app.get("/install_software_sdk.bat", include_in_schema=False)
+def download_windows_batch_installer() -> FileResponse:
+    return FileResponse(
+        BASE_DIR / "install_software_sdk.bat",
+        media_type="application/octet-stream",
+        filename="install_software_sdk.bat",
+    )
+
+
+@app.get("/install_software_sdk.ps1", include_in_schema=False)
+def download_windows_powershell_installer() -> FileResponse:
+    return FileResponse(
+        BASE_DIR / "install_software_sdk.ps1",
+        media_type="application/octet-stream",
+        filename="install_software_sdk.ps1",
+    )
 
 
 @app.get("/dashboard", include_in_schema=False)
@@ -5516,6 +5548,114 @@ def sdk_status(api_key_context: Dict[str, Any] = Depends(require_sdk_api_key)) -
         },
         "dashboard_url": f"{base_url}/dashboard" if base_url else "/dashboard",
         "onboarding_url": f"{base_url}/onboarding" if base_url else "/onboarding",
+    }
+
+
+@app.post("/api/sdk/test-workflow")
+def sdk_test_workflow(
+    payload: SDKTestWorkflowRequest,
+    api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
+) -> Dict[str, Any]:
+    init_db()
+    workflow_id = f"wf_install_test_{uuid.uuid4().hex}"
+    started_at = now_iso()
+    completed_at = now_iso()
+    project_name = payload.project_name or api_key_context["project_name"]
+    workflow_name = payload.workflow_name
+    metadata = {
+        "source": "install_page",
+        **payload.metadata,
+    }
+    with connect() as db:
+        enforce_limit(db, api_key_context["user_id"], "workflows")
+        db.execute(
+            """
+            INSERT INTO sdk_workflows (
+                workflow_id, user_id, project_id, api_key_id,
+                project_name, workflow_name, status, success, confidence,
+                predicted_failure_probability, guardrail_action, total_latency_ms,
+                started_at, completed_at, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, 'completed', 1, 0.99, 0.05, 'continue', 46, ?, ?, ?)
+            """,
+            (
+                workflow_id,
+                api_key_context["user_id"],
+                api_key_context["project_id"],
+                api_key_context["api_key_id"],
+                project_name,
+                workflow_name,
+                started_at,
+                completed_at,
+                json_dumps(metadata),
+            ),
+        )
+        sdk_insert_event(
+            db,
+            workflow_id,
+            "workflow_start",
+            name=workflow_name,
+            payload={"project_name": project_name, "metadata": metadata},
+        )
+        sdk_insert_event(
+            db,
+            workflow_id,
+            "stage",
+            stage_name="install_test",
+            name="completed",
+            success=True,
+            latency_ms=12,
+            confidence=0.99,
+            payload={"metadata": metadata},
+        )
+        sdk_insert_event(
+            db,
+            workflow_id,
+            "tool_call",
+            stage_name="install_test",
+            tool_name="install_page",
+            name="install_page",
+            success=True,
+            latency_ms=24,
+            confidence=0.99,
+            payload={"result_count": 1, "metadata": metadata},
+        )
+        sdk_insert_event(
+            db,
+            workflow_id,
+            "workflow_complete",
+            success=True,
+            latency_ms=46,
+            confidence=0.99,
+            payload={"metadata": metadata, "guardrail": {"action": "continue", "should_continue": True}},
+        )
+        record_usage(
+            db,
+            api_key_context["user_id"],
+            "workflow",
+            project_id=api_key_context["project_id"],
+            api_key_id=api_key_context["api_key_id"],
+            metadata={"workflow_id": workflow_id, "workflow_name": workflow_name, "source": "install_page"},
+        )
+        record_usage(
+            db,
+            api_key_context["user_id"],
+            "tool_call",
+            project_id=api_key_context["project_id"],
+            api_key_id=api_key_context["api_key_id"],
+            metadata={"workflow_id": workflow_id, "tool_name": "install_page"},
+        )
+    return {
+        "ok": True,
+        "workflow_id": workflow_id,
+        "project": {
+            "id": api_key_context["project_id"],
+            "name": api_key_context["project_name"],
+        },
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "dashboard_url": f"{PUBLIC_BASE_URL}/dashboard" if PUBLIC_BASE_URL else "/dashboard",
+        "message": "SDK test workflow recorded.",
     }
 
 

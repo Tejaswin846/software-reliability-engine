@@ -185,6 +185,40 @@ button.danger {
   padding: 12px;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.install-grid,
+.install-command-list,
+.install-steps {
+  display: grid;
+  gap: 14px;
+}
+
+.install-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.install-steps {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.code-snippet {
+  background: #10231d;
+  border-radius: 8px;
+  color: #e9fff4;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 0;
+  overflow: auto;
+  padding: 14px;
+  white-space: pre-wrap;
+}
+
 table {
   border-collapse: collapse;
   width: 100%;
@@ -207,6 +241,11 @@ th {
   .row {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .install-grid,
+  .install-steps {
+    grid-template-columns: 1fr;
   }
 
   .shell {

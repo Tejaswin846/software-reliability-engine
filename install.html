@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Install Software SDK</title>
+    <link rel="stylesheet" href="/saas.css">
+  </head>
+  <body data-requires-auth="true">
+    <header class="topbar">
+      <div class="brand">
+        <span>Software</span>
+        <strong>Install SDK</strong>
+      </div>
+      <nav class="nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/projects">Projects</a>
+        <a href="/api-keys">API Keys</a>
+        <span id="user-label" class="muted"></span>
+        <button id="logout-button" type="button" class="secondary">Logout</button>
+      </nav>
+    </header>
+
+    <main id="install-sdk-page" class="shell stack">
+      <section class="panel stack">
+        <div class="row">
+          <div>
+            <h1>Install the Software SDK</h1>
+            <p class="muted">Connect an AI-agent project to the reliability dashboard with a generated API key and one installer script.</p>
+          </div>
+          <a class="button secondary" href="/dashboard">View Dashboard</a>
+        </div>
+        <div id="install-message" class="message"></div>
+      </section>
+
+      <section class="panel stack">
+        <div class="row">
+          <div>
+            <h2>Project Connection</h2>
+            <p class="muted">Choose a project, generate or paste an API key, then test the SDK connection.</p>
+          </div>
+          <button id="test-install-connection" type="button">Test Connection</button>
+        </div>
+
+        <div class="install-grid">
+          <label>
+            User project name
+            <select id="install-project-select"></select>
+          </label>
+          <label>
+            Project name used by SDK
+            <input id="install-project-name" type="text" placeholder="my-agent">
+          </label>
+          <label>
+            API URL
+            <input id="install-api-url" type="url" placeholder="https://software-platform.onrender.com">
+          </label>
+          <label>
+            API key
+            <input id="install-api-key" type="text" placeholder="Generate or paste sw_...">
+          </label>
+        </div>
+
+        <div class="button-row">
+          <button id="generate-install-api-key" type="button" class="secondary">Generate API Key</button>
+          <a class="button secondary" href="/api-keys">Manage API Keys</a>
+        </div>
+
+        <div class="card">
+          <h2>SDK installation status</h2>
+          <p id="install-status" class="muted">Not tested yet. Browser pages cannot silently install software; use the installer script or copy a command, then run Test Connection.</p>
+          <p class="muted">Selected project: <strong id="install-project-name-label">--</strong></p>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>Install Commands</h2>
+        <div class="install-command-list">
+          <article class="card stack">
+            <div class="row">
+              <h2>PyPI future</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-pypi">Copy pip install command</button>
+            </div>
+            <pre id="install-command-pypi" class="code-snippet">pip install software-sdk</pre>
+          </article>
+
+          <article class="card stack">
+            <div class="row">
+              <h2>Current GitHub install</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-github">Copy GitHub install command</button>
+            </div>
+            <pre id="install-command-github" class="code-snippet">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
+          </article>
+
+          <article class="card stack">
+            <div class="row">
+              <h2>Local/dev install</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-local">Copy local install command</button>
+            </div>
+            <pre id="install-command-local" class="code-snippet">pip install -e .</pre>
+          </article>
+
+          <article class="card stack">
+            <div class="row">
+              <h2>Full setup commands</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-setup">Copy setup commands</button>
+            </div>
+            <pre id="install-command-setup" class="code-snippet"></pre>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>Download Installers</h2>
+        <p class="muted">Download a script, inspect it, then run it locally. The browser will not install anything silently.</p>
+        <div class="button-row">
+          <a class="button" href="/install_software_sdk.bat" download>Download Windows installer</a>
+          <a class="button secondary" href="/install_software_sdk.ps1" download>Download setup script</a>
+        </div>
+      </section>
+
+      <section class="panel stack">
+        <h2>Step-by-step setup</h2>
+        <div class="install-steps">
+          <article class="card"><h2>1. Create project</h2><p class="muted">Create or select the project that should receive workflow telemetry.</p></article>
+          <article class="card"><h2>2. Generate API key</h2><p class="muted">Generate a key here or on the API Keys page. Full keys are only shown once.</p></article>
+          <article class="card"><h2>3. Install SDK</h2><p class="muted">Use GitHub install today. Switch to PyPI after the package is published.</p></article>
+          <article class="card"><h2>4. Run software login</h2><p class="muted">Save API URL and API key in your local user config.</p></article>
+          <article class="card"><h2>5. Run software test</h2><p class="muted">Send a real test workflow through the SDK ingestion API.</p></article>
+          <article class="card"><h2>6. View dashboard</h2><p class="muted">Open the SDK Workflows panel and confirm the test workflow appears.</p></article>
+        </div>
+      </section>
+    </main>
+
+    <script src="/saas.js"></script>
+  </body>
+</html>

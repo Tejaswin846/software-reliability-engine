@@ -122,6 +122,7 @@ with monitor.track_workflow("research-task") as workflow:
 
 ```text
 /                  Landing page
+/install           One-click SDK installer page
 /register          Create account
 /login             Login
 /projects          Manage projects
@@ -138,6 +139,7 @@ with monitor.track_workflow("research-task") as workflow:
 - [QUICKSTART.md](QUICKSTART.md)
 - [INSTALL.md](INSTALL.md)
 - [SDK_CLI_GUIDE.md](SDK_CLI_GUIDE.md)
+- [installer_report.md](installer_report.md)
 - [DOCS.md](DOCS.md)
 - [authentication.md](authentication.md)
 - [api_key_management.md](api_key_management.md)
