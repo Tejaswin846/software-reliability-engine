@@ -8,6 +8,7 @@ import hashlib
 import hmac
 import random
 import secrets
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from datetime import timedelta
 from pathlib import Path
@@ -1174,6 +1175,20 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS failure_records (
+                id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                run_id TEXT,
+                workflow_id TEXT NOT NULL,
+                workflow_name TEXT,
+                failure_reason TEXT NOT NULL,
+                failure_category TEXT NOT NULL,
+                execution_duration REAL NOT NULL DEFAULT 0,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+
             CREATE TABLE IF NOT EXISTS model_results (
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL REFERENCES benchmark_runs(run_id) ON DELETE CASCADE,
@@ -1226,6 +1241,15 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_reliability_scores_model_created_at
                 ON reliability_scores(model, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_failure_records_created
+                ON failure_records(created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_failure_records_category_created
+                ON failure_records(failure_category, created_at);
+
+            CREATE INDEX IF NOT EXISTS idx_failure_records_workflow
+                ON failure_records(workflow_id, created_at);
 
             CREATE INDEX IF NOT EXISTS idx_projects_user_created
                 ON projects(user_id, created_at);
@@ -2084,6 +2108,69 @@ def sync_benchmark_to_dashboard_db(
             )
 
 
+def normalize_failure_category(reason: Optional[str]) -> str:
+    value = (reason or "unknown").strip().lower().replace("-", "_").replace(" ", "_")
+    if not value:
+        return "unknown"
+    if "database" in value and "timeout" in value:
+        return "database_timeout"
+    if "timeout" in value:
+        return "timeout"
+    if any(token in value for token in ["tool", "search", "extract", "schema", "api", "endpoint", "provider"]):
+        return "tool_failure"
+    if any(token in value for token in ["confidence", "uncertain"]):
+        return "low_confidence"
+    if any(token in value for token in ["context", "memory"]):
+        return "context_loss"
+    if "planning" in value or "plan" in value:
+        return "planning_error"
+    if any(token in value for token in ["model", "llm", "generation"]):
+        return "model_failure"
+    if any(token in value for token in ["policy", "approval", "unauthorized", "permission"]):
+        return "governance_failure"
+    return value[:64]
+
+
+def record_failure(
+    db: sqlite3.Connection,
+    *,
+    source: str,
+    workflow_id: str,
+    failure_reason: Optional[str],
+    run_id: Optional[str] = None,
+    workflow_name: Optional[str] = None,
+    execution_duration: float = 0.0,
+    retry_count: int = 0,
+    created_at: Optional[str] = None,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> None:
+    reason = (failure_reason or "unknown").strip() or "unknown"
+    stable_key = f"{source}|{run_id or ''}|{workflow_id}"
+    failure_id = f"failure_{hashlib.sha1(stable_key.encode('utf-8')).hexdigest()[:16]}"
+    db.execute(
+        """
+        INSERT OR REPLACE INTO failure_records (
+            id, source, run_id, workflow_id, workflow_name, failure_reason,
+            failure_category, execution_duration, retry_count, created_at, metadata_json
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            failure_id,
+            source,
+            run_id,
+            workflow_id,
+            workflow_name,
+            reason,
+            normalize_failure_category(reason),
+            round(float(execution_duration or 0.0), 4),
+            int(retry_count or 0),
+            created_at or now_iso(),
+            json_dumps(metadata or {}),
+        ),
+    )
+
+
 def require_sdk_api_key(
     x_software_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
@@ -2207,6 +2294,28 @@ def sdk_fetch_events(db: sqlite3.Connection, workflow_id: str) -> List[sqlite3.R
         "SELECT * FROM sdk_events WHERE workflow_id = ? ORDER BY created_at ASC",
         (workflow_id,),
     ).fetchall()
+
+
+def sdk_retry_count(events: List[sqlite3.Row]) -> int:
+    return sum(
+        1
+        for event in events
+        if event["event_type"] == "recovery"
+        or "retry" in str(event["name"] or "").lower()
+        or "retry" in str(event["payload_json"] or "").lower()
+    )
+
+
+def sdk_failure_reason_from_events(events: List[sqlite3.Row]) -> str:
+    for event in reversed(events):
+        if event["event_type"] == "error":
+            return event["error_type"] or event["error_message"] or "sdk_error"
+        if event["success"] == 0 and event["error_message"]:
+            return event["error_message"]
+    for event in reversed(events):
+        if event["success"] == 0:
+            return event["name"] or event["event_type"] or "workflow_failed"
+    return "workflow_failed"
 
 
 def sdk_failure_probability_from_events(events: List[sqlite3.Row]) -> float:
@@ -4246,6 +4355,280 @@ def dashboard_sdk_payload(project_ids: Optional[List[str]] = None) -> Dict[str, 
     }
 
 
+def failure_record_key(record: Dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(record.get("source") or ""),
+        str(record.get("run_id") or ""),
+        str(record.get("workflow_id") or ""),
+    )
+
+
+def collect_failure_records(limit: int = 500) -> tuple[List[Dict[str, Any]], int]:
+    init_db()
+    records: Dict[tuple[str, str, str], Dict[str, Any]] = {}
+    with connect() as db:
+        stored_rows = db.execute(
+            """
+            SELECT source, run_id, workflow_id, workflow_name, failure_reason,
+                   failure_category, execution_duration, retry_count, created_at, metadata_json
+            FROM failure_records
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in stored_rows:
+            record = row_to_dict(row)
+            record["metadata"] = parse_json_object(record.pop("metadata_json", "{}"))
+            records[failure_record_key(record)] = record
+
+        benchmark_rows = db.execute(
+            """
+            SELECT workflow_results.run_id,
+                   workflow_results.workflow_id,
+                   benchmark_runs.model AS workflow_name,
+                   COALESCE(workflow_results.failure_reason, workflow_results.failed_agent, workflow_results.status, 'unknown') AS failure_reason,
+                   workflow_results.execution_time AS execution_duration,
+                   workflow_results.retry_count,
+                   workflow_results.created_at
+            FROM workflow_results
+            JOIN benchmark_runs ON benchmark_runs.run_id = workflow_results.run_id
+            WHERE workflow_results.successful = 0
+            ORDER BY workflow_results.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in benchmark_rows:
+            record = {
+                "source": "benchmark",
+                "run_id": row["run_id"],
+                "workflow_id": row["workflow_id"],
+                "workflow_name": row["workflow_name"],
+                "failure_reason": row["failure_reason"] or "unknown",
+                "failure_category": normalize_failure_category(row["failure_reason"]),
+                "execution_duration": round(float(row["execution_duration"] or 0.0), 4),
+                "retry_count": int(row["retry_count"] or 0),
+                "created_at": row["created_at"],
+                "metadata": {"legacy_source": "workflow_results"},
+            }
+            records.setdefault(failure_record_key(record), record)
+
+        sdk_rows = db.execute(
+            """
+            SELECT sdk_workflows.workflow_id,
+                   sdk_workflows.workflow_name,
+                   sdk_workflows.project_name,
+                   sdk_workflows.total_latency_ms,
+                   sdk_workflows.started_at,
+                   sdk_workflows.completed_at,
+                   (
+                       SELECT COALESCE(error_type, error_message, name, event_type)
+                       FROM sdk_events
+                       WHERE sdk_events.workflow_id = sdk_workflows.workflow_id
+                         AND (event_type = 'error' OR success = 0)
+                       ORDER BY created_at DESC
+                       LIMIT 1
+                   ) AS failure_reason,
+                   (
+                       SELECT COUNT(*)
+                       FROM sdk_events
+                       WHERE sdk_events.workflow_id = sdk_workflows.workflow_id
+                         AND (event_type = 'recovery' OR LOWER(COALESCE(name, '')) LIKE '%retry%')
+                   ) AS retry_count
+            FROM sdk_workflows
+            WHERE success = 0 OR status = 'failed'
+            ORDER BY COALESCE(completed_at, started_at) DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        for row in sdk_rows:
+            reason = row["failure_reason"] or "workflow_failed"
+            record = {
+                "source": "sdk",
+                "run_id": None,
+                "workflow_id": row["workflow_id"],
+                "workflow_name": row["workflow_name"],
+                "failure_reason": reason,
+                "failure_category": normalize_failure_category(reason),
+                "execution_duration": round(float(row["total_latency_ms"] or 0) / 1000.0, 4),
+                "retry_count": int(row["retry_count"] or 0),
+                "created_at": row["completed_at"] or row["started_at"],
+                "metadata": {"project_name": row["project_name"], "legacy_source": "sdk_workflows"},
+            }
+            records.setdefault(failure_record_key(record), record)
+
+        totals = db.execute(
+            """
+            SELECT
+                (SELECT COALESCE(SUM(total_workflows), 0) FROM benchmark_runs) AS benchmark_total,
+                (SELECT COUNT(*) FROM sdk_workflows) AS sdk_total
+            """
+        ).fetchone()
+
+    failures = sorted(records.values(), key=lambda item: item.get("created_at") or "", reverse=True)
+    for record in failures:
+        record["timestamp"] = record["created_at"]
+    total_workflows = int(totals["benchmark_total"] or 0) + int(totals["sdk_total"] or 0)
+    return failures[:limit], total_workflows
+
+
+def failure_recommendations(
+    failures: List[Dict[str, Any]],
+    top_causes: List[Dict[str, Any]],
+    failure_rate: float,
+    average_duration: float,
+    average_retries: float,
+) -> List[Dict[str, Any]]:
+    if not failures:
+        return [
+            {
+                "issue": "No failed workflows recorded yet.",
+                "recommendation": "Run benchmark or SDK workflows to build a failure baseline.",
+                "expected_improvement": 0.0,
+            }
+        ]
+
+    recommendations: List[Dict[str, Any]] = []
+    if top_causes:
+        top = top_causes[0]
+        recommendations.append(
+            {
+                "issue": f"{top['label']} caused {top['percentage']}% of failures.",
+                "recommendation": "Prioritize this category first because it has the largest reliability impact.",
+                "expected_improvement": round(min(35.0, top["percentage"] * 0.45), 2),
+            }
+        )
+
+    timeout_pct = next((cause["percentage"] for cause in top_causes if "timeout" in cause["category"]), 0.0)
+    tool_pct = next((cause["percentage"] for cause in top_causes if cause["category"] == "tool_failure"), 0.0)
+    low_confidence_pct = next((cause["percentage"] for cause in top_causes if cause["category"] == "low_confidence"), 0.0)
+
+    if average_retries < 1.0 and failure_rate > 5.0:
+        recommendations.append(
+            {
+                "issue": "Failed workflows are not retrying often enough.",
+                "recommendation": f"Retry policy could improve reliability by {round(min(18.0, failure_rate * 0.25), 2)}%.",
+                "expected_improvement": round(min(18.0, failure_rate * 0.25), 2),
+            }
+        )
+    if timeout_pct >= 15.0:
+        recommendations.append(
+            {
+                "issue": f"Timeout failures represent {timeout_pct}% of recorded failures.",
+                "recommendation": "Increase timeouts for slow stages and add fallback providers for long-running calls.",
+                "expected_improvement": round(min(22.0, timeout_pct * 0.4), 2),
+            }
+        )
+    if tool_pct >= 15.0:
+        recommendations.append(
+            {
+                "issue": f"External tool failures represent {tool_pct}% of recorded failures.",
+                "recommendation": "Add provider health checks, schema validation, and backup tool routing.",
+                "expected_improvement": round(min(24.0, tool_pct * 0.42), 2),
+            }
+        )
+    if low_confidence_pct >= 10.0:
+        recommendations.append(
+            {
+                "issue": f"Low confidence caused {low_confidence_pct}% of failures.",
+                "recommendation": "Use confidence gates earlier and reroute low-confidence tasks before final generation.",
+                "expected_improvement": round(min(16.0, low_confidence_pct * 0.35), 2),
+            }
+        )
+    if average_duration > 4.0:
+        recommendations.append(
+            {
+                "issue": f"Failed workflows average {round(average_duration, 2)}s before stopping.",
+                "recommendation": "Add earlier stage-level failure checks to reduce wasted execution time.",
+                "expected_improvement": round(min(12.0, average_duration * 1.5), 2),
+            }
+        )
+    return recommendations[:5]
+
+
+def failure_analysis_payload(limit: int = 500) -> Dict[str, Any]:
+    failures, total_workflows = collect_failure_records(limit)
+    total_failures = len(failures)
+    total_retries = sum(int(failure.get("retry_count") or 0) for failure in failures)
+    total_duration = sum(float(failure.get("execution_duration") or 0.0) for failure in failures)
+    average_duration = round(total_duration / total_failures, 3) if total_failures else 0.0
+    average_retries = round(total_retries / total_failures, 3) if total_failures else 0.0
+    failure_rate = round(total_failures / total_workflows * 100.0, 2) if total_workflows else 0.0
+
+    category_counts = Counter(str(failure["failure_category"]) for failure in failures)
+    top_causes = [
+        {
+            "category": category,
+            "label": category.replace("_", " ").title(),
+            "count": count,
+            "percentage": round(count / total_failures * 100.0, 2) if total_failures else 0.0,
+        }
+        for category, count in category_counts.most_common()
+    ]
+
+    trend_counts = Counter(str(failure.get("created_at") or "")[:10] or "unknown" for failure in failures)
+    failure_trends = [
+        {"date": date, "failures": count}
+        for date, count in sorted(trend_counts.items())
+    ]
+
+    workflow_groups: Dict[str, Dict[str, Any]] = defaultdict(
+        lambda: {"workflow_name": "", "failure_count": 0, "total_duration": 0.0, "total_retries": 0}
+    )
+    for failure in failures:
+        workflow_name = failure.get("workflow_name") or failure.get("workflow_id") or "unknown"
+        group = workflow_groups[str(workflow_name)]
+        group["workflow_name"] = str(workflow_name)
+        group["failure_count"] += 1
+        group["total_duration"] += float(failure.get("execution_duration") or 0.0)
+        group["total_retries"] += int(failure.get("retry_count") or 0)
+
+    unstable_workflows = []
+    for group in workflow_groups.values():
+        count = int(group["failure_count"])
+        avg_duration = group["total_duration"] / count if count else 0.0
+        avg_retries = group["total_retries"] / count if count else 0.0
+        unstable_workflows.append(
+            {
+                "workflow_name": group["workflow_name"],
+                "failure_count": count,
+                "average_duration": round(avg_duration, 3),
+                "average_retries": round(avg_retries, 3),
+                "impact": round(count * (1.0 + avg_retries * 0.25) * (1.0 + min(avg_duration, 10.0) / 10.0), 3),
+            }
+        )
+    unstable_workflows.sort(key=lambda item: (item["impact"], item["failure_count"]), reverse=True)
+
+    reliability_impact_score = round(
+        min(100.0, failure_rate * 0.72 + min(average_duration * 4.0, 20.0) + min(average_retries * 6.0, 18.0)),
+        2,
+    )
+    recommendations = failure_recommendations(
+        failures,
+        top_causes,
+        failure_rate,
+        average_duration,
+        average_retries,
+    )
+    return {
+        "summary": {
+            "total_workflows": total_workflows,
+            "failed_workflows": total_failures,
+            "failure_rate": failure_rate,
+            "average_execution_duration": average_duration,
+            "average_retry_count": average_retries,
+            "reliability_impact_score": reliability_impact_score,
+        },
+        "top_failure_causes": top_causes[:10],
+        "failure_trends": failure_trends,
+        "unstable_workflows": unstable_workflows[:10],
+        "recommendations": recommendations,
+        "failed_workflows": failures[:50],
+    }
+
+
 def dashboard_payload() -> Dict[str, Any]:
     return {
         "overview": dashboard_overview_payload(),
@@ -4629,6 +5012,21 @@ def benchmark_runner_alias() -> RedirectResponse:
 @app.get("/benchmark_runner.js", include_in_schema=False)
 def benchmark_runner_script() -> FileResponse:
     return FileResponse(BASE_DIR / "benchmark_runner.js")
+
+
+@app.get("/failures", include_in_schema=False)
+def failure_analysis_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "failure_analysis.html")
+
+
+@app.get("/failure-analysis", include_in_schema=False)
+def failure_analysis_alias() -> RedirectResponse:
+    return RedirectResponse("/failures", status_code=307)
+
+
+@app.get("/failure_analysis.js", include_in_schema=False)
+def failure_analysis_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "failure_analysis.js")
 
 
 @app.get("/install_software_sdk.bat", include_in_schema=False)
@@ -5655,6 +6053,11 @@ def api_dashboard_recovery_analytics() -> Dict[str, Any]:
     return {"ok": True, "recovery_analytics": recovery_summary()}
 
 
+@app.get("/api/failure-analysis")
+def api_failure_analysis(limit: int = Query(500, ge=1, le=2000)) -> Dict[str, Any]:
+    return {"ok": True, **failure_analysis_payload(limit)}
+
+
 @app.get("/api/copilot/recommendations")
 def api_copilot_recommendations(
     limit: int = Query(10, ge=1, le=50),
@@ -6045,7 +6448,7 @@ def sdk_log_error(
 ) -> Dict[str, Any]:
     init_db()
     with connect() as db:
-        sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
+        workflow = sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
         event_id = sdk_insert_event(
             db,
             payload.workflow_id,
@@ -6062,6 +6465,22 @@ def sdk_log_error(
                 "UPDATE sdk_workflows SET status = 'failed', success = 0 WHERE workflow_id = ?",
                 (payload.workflow_id,),
             )
+            events = sdk_fetch_events(db, payload.workflow_id)
+            record_failure(
+                db,
+                source="sdk",
+                workflow_id=payload.workflow_id,
+                workflow_name=workflow["workflow_name"],
+                failure_reason=payload.error_type or payload.error_message,
+                execution_duration=float(workflow["total_latency_ms"] or 0) / 1000.0,
+                retry_count=sdk_retry_count(events),
+                created_at=now_iso(),
+                metadata={
+                    "project_name": workflow["project_name"],
+                    "stage_name": payload.stage_name,
+                    "fatal": payload.fatal,
+                },
+            )
     return {"ok": True, "event_id": event_id}
 
 
@@ -6073,7 +6492,7 @@ def sdk_complete_workflow(
     init_db()
     completed_at = now_iso()
     with connect() as db:
-        sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
+        workflow = sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
         events = sdk_fetch_events(db, payload.workflow_id)
         calculated_latency = sum(int(event["latency_ms"] or 0) for event in events)
         total_latency_ms = payload.total_latency_ms if payload.total_latency_ms is not None else calculated_latency
@@ -6107,6 +6526,22 @@ def sdk_complete_workflow(
             confidence=payload.confidence,
             payload={"metadata": payload.metadata, "guardrail": guardrail},
         )
+        if not payload.success:
+            record_failure(
+                db,
+                source="sdk",
+                workflow_id=payload.workflow_id,
+                workflow_name=workflow["workflow_name"],
+                failure_reason=sdk_failure_reason_from_events(events),
+                execution_duration=float(total_latency_ms or 0) / 1000.0,
+                retry_count=sdk_retry_count(events),
+                created_at=completed_at,
+                metadata={
+                    "project_name": workflow["project_name"],
+                    "guardrail_action": guardrail["action"],
+                    "probability_of_failure": probability,
+                },
+            )
     return {
         "ok": True,
         "workflow_id": payload.workflow_id,
@@ -6342,6 +6777,25 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
                         created_at,
                     ),
                 )
+                if not workflow.successful:
+                    record_failure(
+                        db,
+                        source="benchmark",
+                        run_id=run_id,
+                        workflow_id=workflow.workflow_id,
+                        workflow_name=payload.model,
+                        failure_reason=workflow.failure_reason or workflow.failed_agent or workflow.status,
+                        execution_duration=workflow.execution_time,
+                        retry_count=workflow.retry_count,
+                        created_at=created_at,
+                        metadata={
+                            "failed_agent": workflow.failed_agent,
+                            "status": workflow.status,
+                            "rollback_count": workflow.rollback_count,
+                            "escalation_count": workflow.escalation_count,
+                            "environment": payload.environment,
+                        },
+                    )
     except sqlite3.IntegrityError as error:
         raise HTTPException(status_code=409, detail=f"Could not create benchmark run: {error}") from error
 

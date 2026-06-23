@@ -479,6 +479,30 @@ th {
   font-weight: 800;
 }
 
+.recommendation-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.recommendation-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.recommendation-card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 10px;
+}
+
+.recommendation-card strong {
+  color: var(--accent);
+  font-size: 13px;
+}
+
 @media (max-width: 900px) {
   .topbar,
   .section-header,
@@ -496,7 +520,8 @@ th {
   .split,
   .tool-grid,
   .runner-form,
-  .chart-grid {
+  .chart-grid,
+  .recommendation-list {
     grid-template-columns: 1fr;
   }
 

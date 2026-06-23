@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Failure Analysis - Software</title>
+    <link rel="stylesheet" href="/dashboard.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Software Project</p>
+        <h1>Failure Analysis</h1>
+      </div>
+      <div class="topbar-actions">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/benchmarks">Benchmark Runner</a>
+        <a href="/install">Install SDK</a>
+        <div class="status-pill" id="analysis-status">Loading failure data...</div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Failure Overview</h2>
+          <span class="muted" id="analysis-updated">--</span>
+        </div>
+        <div class="metric-grid">
+          <article class="metric">
+            <span>Total Workflows</span>
+            <strong id="total-workflows">--</strong>
+          </article>
+          <article class="metric">
+            <span>Failed Workflows</span>
+            <strong id="failed-workflows">--</strong>
+          </article>
+          <article class="metric">
+            <span>Failure Rate</span>
+            <strong id="failure-rate">--</strong>
+          </article>
+          <article class="metric">
+            <span>Avg Duration</span>
+            <strong id="avg-duration">--</strong>
+          </article>
+          <article class="metric score">
+            <span>Reliability Impact</span>
+            <strong id="impact-score">--</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Top Failure Causes</h2>
+          <span class="muted">Ranked by count</span>
+        </div>
+        <div id="failure-causes" class="bar-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Failure Trends</h2>
+          <span class="muted">Frequency over time</span>
+        </div>
+        <div id="failure-trend-chart" class="runner-chart"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Recommendations</h2>
+          <span class="muted">Generated from observed failure patterns</span>
+        </div>
+        <div id="recommendations" class="recommendation-list"></div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Most Unstable Workflows</h2>
+          <span class="muted">Highest failure impact first</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Workflow</th>
+                <th>Failures</th>
+                <th>Avg Duration</th>
+                <th>Avg Retries</th>
+                <th>Impact</th>
+              </tr>
+            </thead>
+            <tbody id="unstable-workflows"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Recent Failed Workflows</h2>
+          <span class="muted">Timestamp, reason, duration, and retry count</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Timestamp</th>
+                <th>Workflow ID</th>
+                <th>Reason</th>
+                <th>Duration</th>
+                <th>Retries</th>
+                <th>Source</th>
+              </tr>
+            </thead>
+            <tbody id="failed-workflows-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/failure_analysis.js"></script>
+  </body>
+</html>
