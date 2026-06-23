@@ -402,6 +402,83 @@ th {
   padding: 14px;
 }
 
+.runner-form {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.runner-form label {
+  color: var(--text);
+  display: grid;
+  font-size: 13px;
+  font-weight: 800;
+  gap: 6px;
+}
+
+.runner-form input,
+.runner-form select {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  padding: 11px 12px;
+  width: 100%;
+}
+
+.runner-actions {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  grid-column: 1 / -1;
+}
+
+.runner-actions button {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: #ffffff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  padding: 11px 15px;
+}
+
+.runner-actions button.secondary {
+  background: #ffffff;
+  color: var(--accent);
+}
+
+.chart-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.chart-card {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.runner-chart svg {
+  display: block;
+  height: auto;
+  width: 100%;
+}
+
+.chart-axis {
+  stroke: #d9e1dd;
+  stroke-width: 2;
+}
+
+.chart-label {
+  fill: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 @media (max-width: 900px) {
   .topbar,
   .section-header,
@@ -417,7 +494,9 @@ th {
 
   .shell,
   .split,
-  .tool-grid {
+  .tool-grid,
+  .runner-form,
+  .chart-grid {
     grid-template-columns: 1fr;
   }
 

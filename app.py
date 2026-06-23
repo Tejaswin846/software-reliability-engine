@@ -6,6 +6,7 @@ import sqlite3
 import uuid
 import hashlib
 import hmac
+import random
 import secrets
 from datetime import datetime, timezone
 from datetime import timedelta
@@ -1436,6 +1437,21 @@ class BenchmarkRunCreate(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
+class BenchmarkRunnerRequest(BaseModel):
+    model: str = Field("software-simulated-agent", min_length=1, max_length=160)
+    provider_url: str = Field("local-simulator", min_length=1, max_length=500)
+    workflow_count: int = Field(50, ge=1, le=500)
+    scenario: str = Field("mixed", pattern="^(mixed|success|failure)$")
+    target_success_rate: Optional[float] = Field(None, ge=0, le=100)
+    seed: Optional[int] = None
+
+
+class BenchmarkSampleRequest(BaseModel):
+    runs: int = Field(6, ge=1, le=25)
+    workflow_count: int = Field(40, ge=1, le=500)
+    seed: Optional[int] = None
+
+
 class SDKWorkflowStart(BaseModel):
     project_name: str = Field(..., min_length=1, max_length=160)
     workflow_name: str = Field(..., min_length=1, max_length=220)
@@ -1859,6 +1875,213 @@ def validate_counts(payload: BenchmarkRunCreate) -> None:
 def make_run_id(model: str) -> str:
     clean_model = "".join(ch.lower() if ch.isalnum() else "_" for ch in model).strip("_")[:40]
     return f"run_{clean_model}_{uuid.uuid4().hex[:10]}"
+
+
+def clamp_float(value: float, lower: float, upper: float) -> float:
+    return max(lower, min(upper, value))
+
+
+def scenario_success_rate(scenario: str, target_success_rate: Optional[float], rng: random.Random) -> float:
+    if target_success_rate is not None:
+        return target_success_rate
+    if scenario == "success":
+        return clamp_float(rng.gauss(93.0, 3.0), 85.0, 99.0)
+    if scenario == "failure":
+        return clamp_float(rng.gauss(42.0, 9.0), 15.0, 62.0)
+    return clamp_float(rng.gauss(76.0, 8.0), 58.0, 91.0)
+
+
+def build_simulated_benchmark_payload(
+    request: BenchmarkRunnerRequest,
+    run_index: int = 0,
+    sample_mode: bool = False,
+) -> BenchmarkRunCreate:
+    rng = random.Random(request.seed + run_index if request.seed is not None else None)
+    target = scenario_success_rate(request.scenario, request.target_success_rate, rng)
+    model_suffix = f"-sample-{run_index + 1}" if sample_mode else ""
+    model = f"{request.model}{model_suffix}"
+    failure_agents = [
+        "ResearchAgent",
+        "PlanningAgent",
+        "SearchAgent",
+        "ExtractionAgent",
+        "CodeAgent",
+        "TestAgent",
+        "ResponseAgent",
+    ]
+    failure_reasons = [
+        "tool_timeout",
+        "low_confidence",
+        "model_timeout",
+        "extraction_failure",
+        "planning_error",
+        "context_loss",
+        "schema_mismatch",
+    ]
+    workflows: List[WorkflowResultCreate] = []
+    retry_total = 0
+    rollback_total = 0
+    escalation_total = 0
+    stop_total = 0
+    confidence_total = 0.0
+    execution_total = 0.0
+
+    for index in range(request.workflow_count):
+        successful = rng.random() < (target / 100.0)
+        retry_count = rng.randint(0, 1 if successful else 4)
+        rollback_count = 0 if successful else rng.randint(0, 2)
+        escalation_count = 0 if successful or rng.random() > 0.35 else 1
+        stopped = 0 if successful or rng.random() > 0.2 else 1
+        confidence = clamp_float(
+            rng.gauss(0.92 if successful else 0.66, 0.06 if successful else 0.12),
+            0.35,
+            0.99,
+        )
+        execution_time = clamp_float(
+            rng.gauss(1.5 if successful else 3.2, 0.6 if successful else 1.4),
+            0.2,
+            12.0,
+        )
+        retry_total += retry_count
+        rollback_total += rollback_count
+        escalation_total += escalation_count
+        stop_total += stopped
+        confidence_total += confidence
+        execution_total += execution_time
+        workflows.append(
+            WorkflowResultCreate(
+                workflow_id=f"wf_benchmark_{uuid.uuid4().hex[:12]}",
+                status="completed" if successful else ("stopped" if stopped else "failed"),
+                successful=successful,
+                failed_agent=None if successful else rng.choice(failure_agents),
+                failure_reason=None if successful else rng.choice(failure_reasons),
+                execution_time=round(execution_time, 3),
+                confidence=round(confidence, 4),
+                retry_count=retry_count,
+                rollback_count=rollback_count,
+                escalation_count=escalation_count,
+            )
+        )
+
+    successful_count = sum(1 for workflow in workflows if workflow.successful)
+    failed_count = request.workflow_count - successful_count
+    tool_reliability = clamp_float(100.0 - (failed_count / request.workflow_count * 35.0) - rng.uniform(0, 8), 40.0, 99.5)
+    timeout_rate = clamp_float((failed_count / request.workflow_count * 18.0) + rng.uniform(0, 5), 0.0, 45.0)
+    simulation_success = clamp_float(target + rng.uniform(2.0, 10.0), 0.0, 99.0)
+    return BenchmarkRunCreate(
+        model=model,
+        provider_url=request.provider_url,
+        environment="benchmark_runner",
+        total_workflows=request.workflow_count,
+        successful=successful_count,
+        failed=failed_count,
+        average_execution_time=round(execution_total / request.workflow_count, 3),
+        average_confidence=round(confidence_total / request.workflow_count, 4),
+        retries=retry_total,
+        rollbacks=rollback_total,
+        escalations=escalation_total,
+        stops=stop_total,
+        tool_reliability=round(tool_reliability, 2),
+        timeout_rate=round(timeout_rate, 2),
+        simulation_success_rate=round(simulation_success, 2),
+        data_completeness=95.0,
+        workflows=workflows,
+        metadata={
+            "source": "benchmark_runner",
+            "scenario": request.scenario,
+            "target_success_rate": round(target, 2),
+            "sample_mode": sample_mode,
+        },
+    )
+
+
+def sync_benchmark_to_dashboard_db(
+    run_id: str,
+    payload: BenchmarkRunCreate,
+    metrics: Any,
+    created_at: str,
+) -> None:
+    init_reliability_db()
+    metadata = {
+        **payload.metadata,
+        "provider_url": payload.provider_url,
+        "environment": payload.environment,
+        "reliability_band_v2": metrics.reliability_band_v2,
+    }
+    with reliability_connect() as db:
+        db.execute(
+            """
+            INSERT OR REPLACE INTO benchmark_runs (
+                run_id, run_type, source_file, generated_at, total_workflows, metadata_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                payload.environment or "benchmark_runner",
+                "api://benchmark-runner",
+                created_at,
+                payload.total_workflows,
+                json.dumps(metadata, ensure_ascii=False),
+            ),
+        )
+        db.execute("DELETE FROM model_results WHERE run_id = ?", (run_id,))
+        db.execute("DELETE FROM workflow_runs WHERE run_id = ?", (run_id,))
+        db.execute(
+            """
+            INSERT INTO model_results (
+                run_id, model, total_workflows, successful_workflows, failed_workflows,
+                success_rate, failure_rate, average_execution_time_ms, average_confidence,
+                retries, rollbacks, escalations, timeout_rate, tool_reliability,
+                reliability_score_v2, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                payload.model,
+                payload.total_workflows,
+                payload.successful,
+                payload.failed,
+                metrics.success_rate,
+                metrics.failure_rate,
+                metrics.average_execution_time_ms,
+                payload.average_confidence,
+                payload.retries,
+                payload.rollbacks,
+                payload.escalations,
+                metrics.timeout_rate,
+                metrics.tool_reliability,
+                metrics.reliability_score_v2,
+                created_at,
+            ),
+        )
+        for workflow in payload.workflows:
+            db.execute(
+                """
+                INSERT OR REPLACE INTO workflow_runs (
+                    run_id, workflow_id, model, confidence, latency_ms,
+                    prediction_result_json, guardrail_action_json, baseline_success,
+                    final_outcome, failed_stage, retries, rollbacks, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    workflow.workflow_id,
+                    payload.model,
+                    workflow.confidence,
+                    workflow.execution_time * 1000.0,
+                    None,
+                    None,
+                    1 if workflow.successful else 0,
+                    "success" if workflow.successful else "failed",
+                    workflow.failed_agent,
+                    workflow.retry_count,
+                    workflow.rollback_count,
+                    created_at,
+                ),
+            )
 
 
 def require_sdk_api_key(
@@ -4184,6 +4407,8 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "install.html": BASE_DIR / "install.html",
         "install_software_sdk.bat": BASE_DIR / "install_software_sdk.bat",
         "install_software_sdk.ps1": BASE_DIR / "install_software_sdk.ps1",
+        "benchmark_runner.html": BASE_DIR / "benchmark_runner.html",
+        "benchmark_runner.js": BASE_DIR / "benchmark_runner.js",
         "validation.js": BASE_DIR / "validation.js",
         "dashboard.html": BASE_DIR / "dashboard.html",
         "dashboard.css": BASE_DIR / "dashboard.css",
@@ -4389,6 +4614,21 @@ def onboarding_page() -> FileResponse:
 @app.get("/install", include_in_schema=False)
 def install_page() -> FileResponse:
     return FileResponse(BASE_DIR / "install.html")
+
+
+@app.get("/benchmarks", include_in_schema=False)
+def benchmark_runner_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "benchmark_runner.html")
+
+
+@app.get("/benchmark-runner", include_in_schema=False)
+def benchmark_runner_alias() -> RedirectResponse:
+    return RedirectResponse("/benchmarks", status_code=307)
+
+
+@app.get("/benchmark_runner.js", include_in_schema=False)
+def benchmark_runner_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "benchmark_runner.js")
 
 
 @app.get("/install_software_sdk.bat", include_in_schema=False)
@@ -6105,11 +6345,81 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
     except sqlite3.IntegrityError as error:
         raise HTTPException(status_code=409, detail=f"Could not create benchmark run: {error}") from error
 
+    sync_benchmark_to_dashboard_db(run_id, payload, metrics, created_at)
+
     return {
         "ok": True,
         "run": fetch_run(run_id),
         "score": fetch_score(run_id),
         "workflow_results_count": len(payload.workflows),
+    }
+
+
+@app.get("/api/benchmark-runner/history")
+def benchmark_runner_history(limit: int = Query(20, ge=1, le=200)) -> Dict[str, Any]:
+    init_db()
+    with connect() as db:
+        rows = db.execute(
+            """
+            SELECT *
+            FROM benchmark_runs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {
+        "ok": True,
+        "overview": dashboard_overview_payload(),
+        "trends": dashboard_trends_payload(),
+        "runs": [row_to_dict(row) for row in rows],
+    }
+
+
+@app.post("/api/benchmark-runner/run")
+def run_benchmark_from_runner(payload: BenchmarkRunnerRequest) -> Dict[str, Any]:
+    benchmark_payload = build_simulated_benchmark_payload(payload)
+    result = create_benchmark_run(benchmark_payload)
+    return {
+        "ok": True,
+        "message": "Benchmark run completed.",
+        **result,
+        "overview": dashboard_overview_payload(),
+        "trends": dashboard_trends_payload(),
+    }
+
+
+@app.post("/api/benchmark-runner/sample-data")
+def generate_benchmark_sample_data(payload: BenchmarkSampleRequest) -> Dict[str, Any]:
+    scenarios = ["success", "mixed", "failure", "mixed", "success", "mixed"]
+    created: List[Dict[str, Any]] = []
+    for index in range(payload.runs):
+        scenario = scenarios[index % len(scenarios)]
+        target = 92 - (index * 4) if scenario == "success" else None
+        request = BenchmarkRunnerRequest(
+            model="sample-agent",
+            provider_url="sample-generator",
+            workflow_count=payload.workflow_count,
+            scenario=scenario,
+            target_success_rate=target,
+            seed=payload.seed + index if payload.seed is not None else None,
+        )
+        result = create_benchmark_run(build_simulated_benchmark_payload(request, run_index=index, sample_mode=True))
+        created.append(
+            {
+                "run_id": result["run"]["run_id"],
+                "model": result["run"]["model"],
+                "success_rate": result["run"]["success_rate"],
+                "failure_rate": result["run"]["failure_rate"],
+                "reliability_score_v2": result["run"]["reliability_score_v2"],
+            }
+        )
+    return {
+        "ok": True,
+        "message": f"Generated {len(created)} sample benchmark runs.",
+        "created": created,
+        "overview": dashboard_overview_payload(),
+        "trends": dashboard_trends_payload(),
     }
 
 

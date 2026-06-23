@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Software Benchmark Runner</title>
+    <link rel="stylesheet" href="/dashboard.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Software Reliability Engine</p>
+        <h1>Benchmark Runner</h1>
+      </div>
+      <div class="topbar-actions">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/install">Install SDK</a>
+        <a href="/developer-docs">Docs</a>
+        <div class="status-pill" id="runner-status">Ready</div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Create Test Workflows</h2>
+          <span class="muted">Simulate success and failure cases without external APIs</span>
+        </div>
+        <form id="benchmark-form" class="runner-form">
+          <label>
+            Model / agent label
+            <input id="runner-model" name="model" type="text" value="software-simulated-agent" required>
+          </label>
+          <label>
+            Provider URL
+            <input id="runner-provider" name="provider_url" type="text" value="local-simulator" required>
+          </label>
+          <label>
+            Workflow count
+            <input id="runner-count" name="workflow_count" type="number" min="1" max="500" value="50" required>
+          </label>
+          <label>
+            Scenario
+            <select id="runner-scenario" name="scenario">
+              <option value="mixed">Mixed success/failure</option>
+              <option value="success">Mostly successful</option>
+              <option value="failure">Failure-heavy</option>
+            </select>
+          </label>
+          <label>
+            Target success rate (optional)
+            <input id="runner-target" name="target_success_rate" type="number" min="0" max="100" step="1" placeholder="Auto">
+          </label>
+          <label>
+            Seed (optional)
+            <input id="runner-seed" name="seed" type="number" step="1" placeholder="Random">
+          </label>
+          <div class="runner-actions">
+            <button type="submit">Run Benchmark</button>
+            <button id="sample-data-button" type="button" class="secondary">Generate Sample Data</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
+          <h2>Current Metrics</h2>
+          <span id="runner-last-updated" class="muted">--</span>
+        </div>
+        <div class="metric-grid">
+          <article class="metric">
+            <span>Total Runs</span>
+            <strong id="runner-total-runs">--</strong>
+          </article>
+          <article class="metric">
+            <span>Total Workflows</span>
+            <strong id="runner-total-workflows">--</strong>
+          </article>
+          <article class="metric">
+            <span>Success Rate</span>
+            <strong id="runner-success-rate">--</strong>
+          </article>
+          <article class="metric">
+            <span>Failure Rate</span>
+            <strong id="runner-failure-rate">--</strong>
+          </article>
+          <article class="metric score">
+            <span>Reliability Score</span>
+            <strong id="runner-reliability-score">--</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Charts</h2>
+          <span class="muted">Updated after each benchmark run</span>
+        </div>
+        <div class="chart-grid">
+          <article class="chart-card">
+            <h3>Success Rate</h3>
+            <div id="success-chart" class="runner-chart"></div>
+          </article>
+          <article class="chart-card">
+            <h3>Failure Rate</h3>
+            <div id="failure-chart" class="runner-chart"></div>
+          </article>
+          <article class="chart-card">
+            <h3>Reliability Score Over Time</h3>
+            <div id="reliability-chart" class="runner-chart"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel wide">
+        <div class="section-header">
+          <h2>Benchmark History</h2>
+          <span class="muted">Stored in SQLite and reflected on the main dashboard</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Run</th>
+                <th>Model</th>
+                <th>Workflows</th>
+                <th>Success</th>
+                <th>Failure</th>
+                <th>Reliability</th>
+                <th>Created</th>
+              </tr>
+            </thead>
+            <tbody id="benchmark-history-table"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="/benchmark_runner.js"></script>
+  </body>
+</html>

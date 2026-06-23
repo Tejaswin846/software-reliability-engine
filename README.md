@@ -123,6 +123,7 @@ with monitor.track_workflow("research-task") as workflow:
 ```text
 /                  Landing page
 /install           One-click SDK installer page
+/benchmarks        Benchmark runner and sample data generator
 /register          Create account
 /login             Login
 /projects          Manage projects
