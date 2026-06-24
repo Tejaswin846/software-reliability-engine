@@ -164,6 +164,7 @@ function wireRunner() {
           method: "POST",
           body: JSON.stringify(formPayload()),
         });
+        window.softwareTrack?.("benchmark_run");
         await loadRunner();
         setBusy("Benchmark run completed");
       } catch (error) {
@@ -184,6 +185,7 @@ function wireRunner() {
             seed: byId("runner-seed").value === "" ? null : Number(byId("runner-seed").value),
           }),
         });
+        window.softwareTrack?.("benchmark_run");
         await loadRunner();
         setBusy("Sample data generated");
       } catch (error) {

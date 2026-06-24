@@ -99,6 +99,7 @@ PUBLIC_BASE_URL = (
     or os.getenv("RENDER_EXTERNAL_URL")
     or ""
 ).strip().rstrip("/")
+CLARITY_PROJECT_ID = os.getenv("CLARITY_PROJECT_ID", "xc0zbrjy3z").strip()
 PRODUCTION_PRIMARY_HOST = os.getenv("SOFTWARE_PRIMARY_HOST", "").strip().lower()
 PRODUCTION_HOSTS = {
     host.strip().lower()
@@ -5131,6 +5132,38 @@ async def production_domain_redirects(request: Request, call_next):
     return await call_next(request)
 
 
+@app.middleware("http")
+async def inject_clarity_loader(request: Request, call_next):
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if (
+        not CLARITY_PROJECT_ID
+        or request.method == "HEAD"
+        or not content_type.lower().startswith("text/html")
+    ):
+        return response
+
+    chunks: List[bytes] = []
+    async for chunk in response.body_iterator:
+        chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
+    body = b"".join(chunks)
+    marker = b'<script src="/clarity.js"></script>'
+    if marker not in body:
+        body = body.replace(b"</head>", marker + b"</head>", 1)
+
+    headers = {
+        key: value
+        for key, value in response.headers.items()
+        if key.lower() not in {"content-length", "content-type"}
+    }
+    return Response(
+        content=body,
+        status_code=response.status_code,
+        headers=headers,
+        media_type="text/html",
+    )
+
+
 @app.on_event("startup")
 def startup() -> None:
     run_startup_checks()
@@ -5236,6 +5269,59 @@ def metrics() -> Dict[str, Any]:
 @app.get("/", include_in_schema=False)
 def landing_page() -> FileResponse:
     return FileResponse(BASE_DIR / "landing.html")
+
+
+@app.get("/clarity.js", include_in_schema=False)
+def clarity_script() -> Response:
+    project_id = json.dumps(CLARITY_PROJECT_ID)
+    script = f"""
+(function () {{
+  var projectId = {project_id};
+  if (!projectId) {{
+    window.softwareTrack = function () {{}};
+    return;
+  }}
+
+  (function(c,l,a,r,i,t,y){{
+    c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};
+    t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+    y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+  }})(window, document, "clarity", "script", projectId);
+
+  window.softwareTrack = function (eventName) {{
+    if (eventName && window.clarity) {{
+      window.clarity("event", eventName);
+    }}
+  }};
+
+  var visitEvents = {{
+    "/dashboard": "dashboard_visit",
+    "/benchmarks": "benchmark_runner_visit",
+    "/benchmark-runner": "benchmark_runner_visit"
+  }};
+  if (visitEvents[window.location.pathname]) {{
+    window.softwareTrack(visitEvents[window.location.pathname]);
+  }}
+
+  document.addEventListener("click", function (event) {{
+    var target = event.target.closest("a, button");
+    if (!target) return;
+    var explicitEvent = target.getAttribute("data-clarity-event");
+    if (explicitEvent) {{
+      window.softwareTrack(explicitEvent);
+      return;
+    }}
+    if (target.tagName === "A" && target.href) {{
+      try {{
+        if (new URL(target.href, window.location.href).pathname === "/install") {{
+          window.softwareTrack("install_click");
+        }}
+      }} catch (_) {{}}
+    }}
+  }}, true);
+}})();
+""".strip()
+    return Response(content=script, media_type="application/javascript")
 
 
 @app.get("/landing.css", include_in_schema=False)

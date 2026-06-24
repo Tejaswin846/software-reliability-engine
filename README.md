@@ -273,6 +273,10 @@ Supabase Authentication provides sign-up, login, logout, password reset,
 persistent browser sessions, protected dashboard pages, and user-scoped
 benchmark history.
 
+Microsoft Clarity analytics is loaded globally when `CLARITY_PROJECT_ID` is
+set. It tracks dashboard visits, benchmark runner visits, install clicks, and
+completed benchmark runs.
+
 ## Production Notes
 
 Set these environment variables:
