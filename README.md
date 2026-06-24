@@ -269,6 +269,9 @@ Supabase. Configure `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then run
 [`supabase_schema.sql`](supabase_schema.sql) in the Supabase SQL editor.
 
 Setup and API details are in [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md).
+Supabase Authentication provides sign-up, login, logout, password reset,
+persistent browser sessions, protected dashboard pages, and user-scoped
+benchmark history.
 
 ## Production Notes
 

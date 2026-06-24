@@ -1,36 +1,5 @@
-const TOKEN_KEY = "software_access_token";
-
-function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
-function authHeaders() {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...authHeaders(),
-      ...(options.headers || {}),
-    },
-  });
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok || body.ok === false) {
-    throw new Error(body.detail || body.message || `Request failed: ${response.status}`);
-  }
-  return body;
+  return window.SoftwareAuth.request(path, options);
 }
 
 function showMessage(id, text, kind = "success") {
@@ -52,44 +21,34 @@ function escapeHtml(value) {
 }
 
 async function requireSession() {
-  if (!getToken()) {
-    window.location.href = "/login";
-    return null;
-  }
   try {
-    const response = await api("/auth/me");
+    const response = await window.SoftwareAuth.session();
     const userLabel = document.getElementById("user-label");
     if (userLabel) {
       userLabel.textContent = response.user.email;
     }
     return response.user;
-  } catch (error) {
-    clearToken();
-    window.location.href = "/login";
+  } catch (_) {
+    const next = encodeURIComponent(window.location.pathname + window.location.search);
+    window.location.href = `/login?next=${next}`;
     return null;
   }
 }
 
 function wireLogout() {
-  const button = document.getElementById("logout-button");
-  if (!button) {
-    return;
-  }
-  button.addEventListener("click", async () => {
-    try {
-      await api("/auth/logout", { method: "POST", body: "{}" });
-    } catch (_) {
-      // Stateless JWT logout is client-side; ignore network failures here.
-    }
-    clearToken();
-    window.location.href = "/login";
-  });
+  window.SoftwareAuth.wireLogout();
 }
 
 function initLogin() {
   const form = document.getElementById("login-form");
   if (!form) {
     return;
+  }
+  const query = new URLSearchParams(window.location.search);
+  if (query.get("confirmed") === "1") {
+    showMessage("login-message", "Email confirmed. You can sign in now.", "success");
+  } else if (query.get("reset") === "1") {
+    showMessage("login-message", "Password updated. Sign in with your new password.", "success");
   }
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -102,8 +61,9 @@ function initLogin() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      setToken(response.access_token);
-      window.location.href = "/projects";
+      const requestedNext = new URLSearchParams(window.location.search).get("next");
+      const next = requestedNext && requestedNext.startsWith("/") ? requestedNext : "/projects";
+      window.location.href = next;
     } catch (error) {
       showMessage("login-message", error.message, "error");
     }
@@ -126,10 +86,85 @@ function initRegister() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      setToken(response.access_token);
+      if (response.confirmation_required) {
+        showMessage(
+          "register-message",
+          "Account created. Check your email to confirm the account, then log in.",
+          "success",
+        );
+        form.reset();
+        return;
+      }
       window.location.href = "/projects";
     } catch (error) {
       showMessage("register-message", error.message, "error");
+    }
+  });
+}
+
+function initPasswordResetRequest() {
+  const form = document.getElementById("forgot-password-form");
+  if (!form) {
+    return;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    try {
+      const response = await api("/auth/password-reset", {
+        method: "POST",
+        body: JSON.stringify({ email: form.email.value }),
+      });
+      showMessage("forgot-password-message", response.message, "success");
+      form.reset();
+    } catch (error) {
+      showMessage("forgot-password-message", error.message, "error");
+    }
+  });
+}
+
+function recoveryTokens() {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return {
+    access_token: hash.get("access_token"),
+    refresh_token: hash.get("refresh_token"),
+  };
+}
+
+function initPasswordUpdate() {
+  const form = document.getElementById("reset-password-form");
+  if (!form) {
+    return;
+  }
+  const tokens = recoveryTokens();
+  if (!tokens.access_token || !tokens.refresh_token) {
+    showMessage(
+      "reset-password-message",
+      "Open this page from the password reset link sent by Supabase.",
+      "error",
+    );
+    form.querySelector("button").disabled = true;
+    return;
+  }
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (form.password.value !== form.confirm_password.value) {
+      showMessage("reset-password-message", "Passwords do not match.", "error");
+      return;
+    }
+    try {
+      const response = await api("/auth/password-update", {
+        method: "POST",
+        body: JSON.stringify({
+          ...tokens,
+          password: form.password.value,
+        }),
+      });
+      showMessage("reset-password-message", response.message, "success");
+      window.setTimeout(() => {
+        window.location.href = "/login?reset=1";
+      }, 900);
+    } catch (error) {
+      showMessage("reset-password-message", error.message, "error");
     }
   });
 }
@@ -483,6 +518,8 @@ function initInstallPage() {
 document.addEventListener("DOMContentLoaded", async () => {
   initLogin();
   initRegister();
+  initPasswordResetRequest();
+  initPasswordUpdate();
   wireLogout();
   if (document.body.dataset.requiresAuth === "true") {
     const user = await requireSession();

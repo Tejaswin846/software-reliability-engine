@@ -1,11 +1,4 @@
 const statusEl = document.getElementById("dashboard-status");
-const authToken = localStorage.getItem("software_access_token");
-const authLink = document.getElementById("auth-link");
-
-if (authLink && authToken) {
-  authLink.textContent = "Account";
-  authLink.href = "/projects";
-}
 
 function byId(id) {
   return document.getElementById(id);
@@ -152,14 +145,11 @@ function renderBilling(billing) {
 }
 
 async function billingPost(endpoint, payload = {}) {
-  if (!authToken) {
-    throw new Error("Login to manage billing.");
-  }
   const response = await fetch(endpoint, {
     method: "POST",
+    credentials: "same-origin",
     headers: {
       "Accept": "application/json",
-      "Authorization": `Bearer ${authToken}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(payload),
@@ -244,7 +234,7 @@ function renderTeamWorkspaces(team) {
             <div class="muted">${formatNumber(org.member_count)} members | ${formatNumber(org.invitation_count)} pending invites</div>
           </div>
         `).join("")
-      : emptyMarkup(authToken ? "No organizations yet." : "Login to manage team workspaces.");
+      : emptyMarkup("No organizations yet.");
   }
 
   const inviteList = byId("team-invitations");
@@ -582,11 +572,10 @@ function renderSdkWorkflows(sdk) {
 
 async function loadDashboard() {
   try {
-    const endpoint = authToken ? "/api/me/dashboard" : "/api/dashboard";
-    const response = await fetch(endpoint, {
+    const response = await fetch("/api/me/dashboard", {
+      credentials: "same-origin",
       headers: {
         Accept: "application/json",
-        ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
       },
     });
     if (!response.ok) {
@@ -607,7 +596,7 @@ async function loadDashboard() {
     renderHistoricalTrends(payload.historical_trends || []);
     renderBilling(payload.billing || null);
     renderSdkWorkflows(payload.sdk_workflows || {});
-    statusEl.textContent = authToken ? "Project-scoped data loaded" : "Reliability data loaded";
+    statusEl.textContent = "Project-scoped data loaded";
     statusEl.classList.remove("error");
   } catch (error) {
     statusEl.textContent = `Dashboard error: ${error.message}`;

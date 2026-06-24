@@ -6,7 +6,7 @@
     <title>Software Benchmark Runner</title>
     <link rel="stylesheet" href="/dashboard.css">
   </head>
-  <body>
+  <body data-requires-auth="true">
     <header class="topbar">
       <div>
         <p class="eyebrow">Software Reliability Engine</p>
@@ -16,6 +16,7 @@
         <a href="/dashboard">Dashboard</a>
         <a href="/install">Install SDK</a>
         <a href="/developer-docs">Docs</a>
+        <button type="button" class="secondary auth-logout" data-logout>Logout</button>
         <div class="status-pill" id="runner-status">Ready</div>
       </div>
     </header>
@@ -136,6 +137,7 @@
       </section>
     </main>
 
+    <script src="/auth.js"></script>
     <script src="/benchmark_runner.js"></script>
   </body>
 </html>

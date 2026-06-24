@@ -8,7 +8,15 @@ dashboard and APIs.
 
 1. Create a Supabase project.
 2. Run `supabase_schema.sql` in the Supabase SQL editor.
-3. Set these server environment variables:
+3. In Supabase Authentication URL Configuration, add:
+
+```text
+https://YOUR_SOFTWARE_DOMAIN/login
+https://YOUR_SOFTWARE_DOMAIN/reset-password
+```
+
+4. Enable Email authentication in Supabase.
+5. Set these server environment variables:
 
 ```text
 SUPABASE_URL=https://your-project.supabase.co
@@ -43,3 +51,24 @@ GET  /api/chats/{chat_id}/messages
 
 Opening a chat with `GET /api/chats/{chat_id}` returns the chat and its complete
 ordered message history.
+
+## Authentication
+
+When Supabase is configured, these routes use Supabase Authentication:
+
+```text
+POST /auth/register
+POST /auth/login
+POST /auth/logout
+GET  /auth/me
+POST /auth/password-reset
+POST /auth/password-update
+```
+
+Software sets an HttpOnly application session cookie after Supabase verifies the
+credentials. This keeps the session across browser refreshes and protects
+`/dashboard`, `/benchmarks`, `/failures`, `/install`, `/projects`, and
+`/api-keys`.
+
+If Supabase is not configured, local development continues to use the existing
+SQLite authentication flow. Password reset requires Supabase.

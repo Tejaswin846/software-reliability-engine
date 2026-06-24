@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS public.messages (
 
 CREATE TABLE IF NOT EXISTS public.benchmark_runs (
     run_id TEXT PRIMARY KEY,
+    user_id TEXT,
     model TEXT NOT NULL,
     provider_url TEXT,
     environment TEXT NOT NULL DEFAULT 'real_world',
@@ -46,6 +47,9 @@ CREATE TABLE IF NOT EXISTS public.benchmark_runs (
     workflow_results JSONB NOT NULL DEFAULT '[]'::JSONB
 );
 
+ALTER TABLE public.benchmark_runs
+    ADD COLUMN IF NOT EXISTS user_id TEXT;
+
 CREATE INDEX IF NOT EXISTS idx_chats_user_updated
     ON public.chats(user_id, updated_at DESC);
 
@@ -54,6 +58,9 @@ CREATE INDEX IF NOT EXISTS idx_messages_chat_created
 
 CREATE INDEX IF NOT EXISTS idx_benchmark_runs_created
     ON public.benchmark_runs(created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_benchmark_runs_user_created
+    ON public.benchmark_runs(user_id, created_at DESC);
 
 ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;

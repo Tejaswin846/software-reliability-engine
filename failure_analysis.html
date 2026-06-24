@@ -6,7 +6,7 @@
     <title>Failure Analysis - Software</title>
     <link rel="stylesheet" href="/dashboard.css">
   </head>
-  <body>
+  <body data-requires-auth="true">
     <header class="topbar">
       <div>
         <p class="eyebrow">Software Project</p>
@@ -16,6 +16,7 @@
         <a href="/dashboard">Dashboard</a>
         <a href="/benchmarks">Benchmark Runner</a>
         <a href="/install">Install SDK</a>
+        <button type="button" class="secondary auth-logout" data-logout>Logout</button>
         <div class="status-pill" id="analysis-status">Loading failure data...</div>
       </div>
     </header>
@@ -118,6 +119,7 @@
       </section>
     </main>
 
+    <script src="/auth.js"></script>
     <script src="/failure_analysis.js"></script>
   </body>
 </html>

@@ -41,19 +41,31 @@ except ImportError:
 
 try:
     from .supabase_client import (
+        auth_get_user as supabase_auth_get_user,
+        auth_request_password_reset as supabase_auth_request_password_reset,
+        auth_sign_in as supabase_auth_sign_in,
+        auth_sign_up as supabase_auth_sign_up,
+        auth_update_password as supabase_auth_update_password,
         create_chat as supabase_create_chat,
         get_chat_history as supabase_get_chat_history,
         save_benchmark_run as supabase_save_benchmark_run,
         save_message as supabase_save_message,
         supabase_health_check,
+        supabase_is_configured,
     )
 except ImportError:
     from supabase_client import (
+        auth_get_user as supabase_auth_get_user,
+        auth_request_password_reset as supabase_auth_request_password_reset,
+        auth_sign_in as supabase_auth_sign_in,
+        auth_sign_up as supabase_auth_sign_up,
+        auth_update_password as supabase_auth_update_password,
         create_chat as supabase_create_chat,
         get_chat_history as supabase_get_chat_history,
         save_benchmark_run as supabase_save_benchmark_run,
         save_message as supabase_save_message,
         supabase_health_check,
+        supabase_is_configured,
     )
 
 
@@ -66,6 +78,8 @@ ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("SOFTWARE_JWT_EXPIRE_MINUTES", "1440"))
+SESSION_COOKIE_NAME = os.getenv("SOFTWARE_SESSION_COOKIE", "software_session")
+SESSION_COOKIE_SECURE = ENVIRONMENT == "production"
 STATIC_SDK_API_KEYS = [
     key.strip()
     for key in os.getenv("SOFTWARE_SDK_API_KEYS", "").split(",")
@@ -1160,6 +1174,7 @@ def init_db() -> None:
 
             CREATE TABLE IF NOT EXISTS benchmark_runs (
                 run_id TEXT PRIMARY KEY,
+                user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
                 model TEXT NOT NULL,
                 provider_url TEXT NOT NULL,
                 environment TEXT NOT NULL DEFAULT 'real_world',
@@ -1209,6 +1224,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS model_results (
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL REFERENCES benchmark_runs(run_id) ON DELETE CASCADE,
+                user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
                 model TEXT NOT NULL,
                 provider_url TEXT NOT NULL,
                 success_rate REAL NOT NULL,
@@ -1227,6 +1243,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS reliability_scores (
                 id TEXT PRIMARY KEY,
                 run_id TEXT NOT NULL REFERENCES benchmark_runs(run_id) ON DELETE CASCADE,
+                user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
                 model TEXT NOT NULL,
                 reliability_score_v1 REAL NOT NULL,
                 reliability_score_v2 REAL NOT NULL,
@@ -1409,6 +1426,21 @@ def init_db() -> None:
         ensure_column(db, "sdk_workflows", "user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL")
         ensure_column(db, "sdk_workflows", "project_id", "TEXT REFERENCES projects(id) ON DELETE SET NULL")
         ensure_column(db, "sdk_workflows", "api_key_id", "TEXT REFERENCES api_keys(id) ON DELETE SET NULL")
+        ensure_column(db, "benchmark_runs", "user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL")
+        ensure_column(db, "model_results", "user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL")
+        ensure_column(db, "reliability_scores", "user_id", "TEXT REFERENCES users(id) ON DELETE SET NULL")
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_benchmark_runs_user_created
+                ON benchmark_runs(user_id, created_at)
+            """
+        )
+        db.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_model_results_user_score
+                ON model_results(user_id, reliability_score_v2)
+            """
+        )
         ensure_column(db, "projects", "organization_id", "TEXT REFERENCES organizations(id) ON DELETE SET NULL")
         ensure_column(db, "users", "stripe_customer_id", "TEXT")
         ensure_column(db, "subscriptions", "stripe_subscription_id", "TEXT")
@@ -1602,6 +1634,16 @@ class AuthLogin(BaseModel):
     password: str = Field(..., min_length=1, max_length=200)
 
 
+class PasswordResetRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=320)
+
+
+class PasswordUpdateRequest(BaseModel):
+    access_token: str = Field(..., min_length=10)
+    refresh_token: str = Field(..., min_length=10)
+    password: str = Field(..., min_length=8, max_length=200)
+
+
 class ChatCreate(BaseModel):
     title: str = Field("New chat", min_length=1, max_length=240)
     project_id: Optional[str] = Field(None, max_length=180)
@@ -1720,19 +1762,117 @@ def bearer_token(authorization: Optional[str]) -> Optional[str]:
     return authorization.strip()
 
 
-def current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
-    token = bearer_token(authorization)
-    if not token:
-        raise HTTPException(status_code=401, detail="Missing bearer token.")
-    user_id = decode_access_token(token)
+def set_session_cookie(response: Response, access_token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=access_token,
+        max_age=JWT_EXPIRE_MINUTES * 60,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        key=SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=SESSION_COOKIE_SECURE,
+        samesite="lax",
+        path="/",
+    )
+
+
+def ensure_external_user(user_id: str, email: str, created_at: Optional[str] = None) -> Dict[str, Any]:
+    init_db()
+    normalized_email = normalize_email(email)
+    timestamp = created_at or now_iso()
+    with connect() as db:
+        row = db.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+        if not row:
+            email_row = db.execute(
+                "SELECT id, email, created_at FROM users WHERE email = ?",
+                (normalized_email,),
+            ).fetchone()
+            if email_row:
+                row = email_row
+            else:
+                db.execute(
+                    """
+                    INSERT INTO users (id, email, password_hash, created_at)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        normalized_email,
+                        hash_password(secrets.token_urlsafe(32)),
+                        timestamp,
+                    ),
+                )
+            ensure_default_subscriptions(db)
+            if row is None:
+                row = db.execute(
+                    "SELECT id, email, created_at FROM users WHERE id = ?",
+                    (user_id,),
+                ).fetchone()
+    return row_to_dict(row)
+
+
+def authenticated_user_from_token(token: str) -> Dict[str, Any]:
+    try:
+        user_id = decode_access_token(token)
+    except HTTPException as local_error:
+        if not supabase_is_configured():
+            raise local_error
+        result = supabase_auth_get_user(token)
+        if not result.get("ok") or not result.get("data"):
+            raise HTTPException(status_code=401, detail="Invalid session.")
+        external = result["data"]
+        if not external.get("id") or not external.get("email"):
+            raise HTTPException(status_code=401, detail="Supabase user is incomplete.")
+        return ensure_external_user(
+            external["id"],
+            external["email"],
+            external.get("created_at"),
+        )
+
     init_db()
     with connect() as db:
         row = db.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
-        if row:
-            record_usage(db, user_id, "api_request", metadata={"source": "user_api"})
     if not row:
         raise HTTPException(status_code=401, detail="User no longer exists.")
     return row_to_dict(row)
+
+
+def current_user(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> Dict[str, Any]:
+    token = bearer_token(authorization) or request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing session.")
+    user = authenticated_user_from_token(token)
+    with connect() as db:
+        record_usage(db, user["id"], "api_request", metadata={"source": "user_api"})
+    return user
+
+
+def optional_current_user(
+    request: Request,
+    authorization: Optional[str] = Header(None),
+) -> Optional[Dict[str, Any]]:
+    try:
+        return current_user(request, authorization)
+    except HTTPException:
+        return None
+
+
+def protected_page(request: Request, filename: str) -> Response:
+    if optional_current_user(request, None) is None:
+        target = request.url.path
+        return RedirectResponse(f"/login?next={target}", status_code=303)
+    return FileResponse(BASE_DIR / filename)
 
 
 def require_admin_user(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
@@ -4305,6 +4445,84 @@ def dashboard_trends_payload() -> List[Dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+def user_benchmark_overview(user_id: str) -> Dict[str, Any]:
+    init_db()
+    with connect() as db:
+        row = db.execute(
+            """
+            SELECT
+                COUNT(*) AS total_benchmark_runs,
+                COALESCE(SUM(total_workflows), 0) AS total_workflows,
+                COALESCE(SUM(successful), 0) AS successful_workflows,
+                COALESCE(SUM(failed), 0) AS failed_workflows,
+                COALESCE(SUM(reliability_score_v2 * total_workflows), 0) AS weighted_score,
+                MAX(created_at) AS last_updated
+            FROM benchmark_runs
+            WHERE user_id = ?
+            """,
+            (user_id,),
+        ).fetchone()
+    total = int(row["total_workflows"] or 0)
+    successful = int(row["successful_workflows"] or 0)
+    failed = int(row["failed_workflows"] or 0)
+    return {
+        "total_benchmark_runs": int(row["total_benchmark_runs"] or 0),
+        "total_workflows": total,
+        "successful_workflows": successful,
+        "failed_workflows": failed,
+        "success_rate": round(successful / total * 100.0, 2) if total else 0.0,
+        "failure_rate": round(failed / total * 100.0, 2) if total else 0.0,
+        "reliability_score": round(float(row["weighted_score"] or 0.0) / total, 2) if total else 0.0,
+        "last_updated": row["last_updated"],
+    }
+
+
+def user_benchmark_trends(user_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    init_db()
+    with connect() as db:
+        rows = db.execute(
+            """
+            SELECT created_at, model AS label, 'model' AS category,
+                   reliability_score_v2 AS reliability_score, success_rate,
+                   failure_rate, average_execution_time * 1000.0 AS latency_ms,
+                   average_confidence
+            FROM benchmark_runs
+            WHERE user_id = ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    return [row_to_dict(row) for row in rows]
+
+
+def user_benchmark_leaderboard(user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    init_db()
+    with connect() as db:
+        rows = db.execute(
+            """
+            SELECT model,
+                   MAX(reliability_score_v2) AS reliability_score_v2,
+                   MAX(success_rate) AS success_rate,
+                   MIN(failure_rate) AS failure_rate,
+                   AVG(average_execution_time * 1000.0) AS average_execution_time_ms,
+                   AVG(average_confidence) AS average_confidence,
+                   SUM(total_workflows) AS total_workflows,
+                   MAX(created_at) AS created_at
+            FROM benchmark_runs
+            WHERE user_id = ?
+            GROUP BY model
+            ORDER BY reliability_score_v2 DESC, success_rate DESC
+            LIMIT ?
+            """,
+            (user_id, limit),
+        ).fetchall()
+    return [
+        {"rank": index, **row_to_dict(row)}
+        for index, row in enumerate(rows, start=1)
+    ]
+
+
 def sdk_project_scope(project_ids: Optional[List[str]]) -> tuple[str, List[Any]]:
     if project_ids is None:
         return "", []
@@ -4696,6 +4914,16 @@ def user_project_ids(user_id: str) -> List[str]:
 def user_dashboard_payload(user: Dict[str, Any]) -> Dict[str, Any]:
     project_ids = user_project_ids(user["id"])
     sdk = dashboard_sdk_payload(project_ids)
+    benchmark = user_benchmark_overview(user["id"])
+    benchmark_total = int(benchmark["total_workflows"])
+    sdk_total = int(sdk["total_workflows"])
+    combined_total = benchmark_total + sdk_total
+    combined_successful = int(benchmark["successful_workflows"]) + int(sdk["successful_workflows"])
+    combined_failed = int(benchmark["failed_workflows"]) + int(sdk["failed_workflows"])
+    weighted_reliability = (
+        float(benchmark["reliability_score"]) * benchmark_total
+        + max(0.0, 100.0 - float(sdk["failure_rate"])) * sdk_total
+    )
     with connect() as db:
         billing = billing_summary(db, user["id"])
         recovery = recovery_summary(project_ids)
@@ -4713,16 +4941,19 @@ def user_dashboard_payload(user: Dict[str, Any]) -> Dict[str, Any]:
         "meta_reliability": meta_reliability,
         "team_workspaces": team_workspaces,
         "sdk_workflows": sdk,
+        "model_leaderboard": user_benchmark_leaderboard(user["id"]),
+        "historical_trends": user_benchmark_trends(user["id"]),
         "overview": {
-            "total_benchmark_runs": 0,
-            "total_workflows": sdk["total_workflows"],
-            "successful_workflows": sdk["successful_workflows"],
-            "failed_workflows": sdk["failed_workflows"],
-            "success_rate": sdk["success_rate"],
-            "failure_rate": sdk["failure_rate"],
-            "reliability_score": round(max(0.0, 100.0 - sdk["failure_rate"]), 2) if sdk["total_workflows"] else 0.0,
+            "total_benchmark_runs": benchmark["total_benchmark_runs"],
+            "total_workflows": combined_total,
+            "successful_workflows": combined_successful,
+            "failed_workflows": combined_failed,
+            "success_rate": round(combined_successful / combined_total * 100.0, 2) if combined_total else 0.0,
+            "failure_rate": round(combined_failed / combined_total * 100.0, 2) if combined_total else 0.0,
+            "reliability_score": round(weighted_reliability / combined_total, 2) if combined_total else 0.0,
             "average_latency_ms": sdk["average_latency_ms"],
             "average_confidence": sdk["average_confidence"],
+            "last_updated": benchmark["last_updated"],
         },
     }
 
@@ -4821,6 +5052,8 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "install_software_sdk.ps1": BASE_DIR / "install_software_sdk.ps1",
         "benchmark_runner.html": BASE_DIR / "benchmark_runner.html",
         "benchmark_runner.js": BASE_DIR / "benchmark_runner.js",
+        "failure_analysis.html": BASE_DIR / "failure_analysis.html",
+        "failure_analysis.js": BASE_DIR / "failure_analysis.js",
         "validation.js": BASE_DIR / "validation.js",
         "dashboard.html": BASE_DIR / "dashboard.html",
         "dashboard.css": BASE_DIR / "dashboard.css",
@@ -4830,10 +5063,13 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "docs/quick-start.html": BASE_DIR / "docs" / "quick-start.html",
         "login.html": BASE_DIR / "login.html",
         "register.html": BASE_DIR / "register.html",
+        "forgot_password.html": BASE_DIR / "forgot_password.html",
+        "reset_password.html": BASE_DIR / "reset_password.html",
         "projects.html": BASE_DIR / "projects.html",
         "api_keys.html": BASE_DIR / "api_keys.html",
         "saas.css": BASE_DIR / "saas.css",
         "saas.js": BASE_DIR / "saas.js",
+        "auth.js": BASE_DIR / "auth.js",
     }
     asset_status = {
         name: {
@@ -5028,13 +5264,13 @@ def onboarding_page() -> FileResponse:
 
 
 @app.get("/install", include_in_schema=False)
-def install_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "install.html")
+def install_page(request: Request) -> Response:
+    return protected_page(request, "install.html")
 
 
 @app.get("/benchmarks", include_in_schema=False)
-def benchmark_runner_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "benchmark_runner.html")
+def benchmark_runner_page(request: Request) -> Response:
+    return protected_page(request, "benchmark_runner.html")
 
 
 @app.get("/benchmark-runner", include_in_schema=False)
@@ -5048,8 +5284,8 @@ def benchmark_runner_script() -> FileResponse:
 
 
 @app.get("/failures", include_in_schema=False)
-def failure_analysis_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "failure_analysis.html")
+def failure_analysis_page(request: Request) -> Response:
+    return protected_page(request, "failure_analysis.html")
 
 
 @app.get("/failure-analysis", include_in_schema=False)
@@ -5081,8 +5317,8 @@ def download_windows_powershell_installer() -> FileResponse:
 
 
 @app.get("/dashboard", include_in_schema=False)
-def dashboard_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "dashboard.html")
+def dashboard_page(request: Request) -> Response:
+    return protected_page(request, "dashboard.html")
 
 
 @app.get("/dashboard.css", include_in_schema=False)
@@ -5093,6 +5329,11 @@ def dashboard_styles() -> FileResponse:
 @app.get("/dashboard.js", include_in_schema=False)
 def dashboard_script() -> FileResponse:
     return FileResponse(BASE_DIR / "dashboard.js")
+
+
+@app.get("/auth.js", include_in_schema=False)
+def auth_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "auth.js")
 
 
 @app.get("/docs.css", include_in_schema=False)
@@ -5145,18 +5386,27 @@ def register_page() -> FileResponse:
     return FileResponse(BASE_DIR / "register.html")
 
 
+@app.get("/forgot-password", include_in_schema=False)
+def forgot_password_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "forgot_password.html")
+
+
+@app.get("/reset-password", include_in_schema=False)
+def reset_password_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "reset_password.html")
+
+
 @app.get("/projects", include_in_schema=False)
-def projects_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "projects.html")
+def projects_page(request: Request) -> Response:
+    return protected_page(request, "projects.html")
 
 
 @app.get("/api-keys", include_in_schema=False)
-def api_keys_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "api_keys.html")
+def api_keys_page(request: Request) -> Response:
+    return protected_page(request, "api_keys.html")
 
 
-@app.post("/auth/register")
-def auth_register(payload: AuthRegister) -> Dict[str, Any]:
+def local_auth_register(payload: AuthRegister) -> Dict[str, Any]:
     init_db()
     email = normalize_email(payload.email)
     user_id = f"usr_{uuid.uuid4().hex}"
@@ -5194,12 +5444,12 @@ def auth_register(payload: AuthRegister) -> Dict[str, Any]:
     return {
         "ok": True,
         "user": {"id": user_id, "email": email, "created_at": created_at},
+        "provider": "local",
         **token,
     }
 
 
-@app.post("/auth/login")
-def auth_login(payload: AuthLogin) -> Dict[str, Any]:
+def local_auth_login(payload: AuthLogin) -> Dict[str, Any]:
     init_db()
     email = normalize_email(payload.email)
     with connect() as db:
@@ -5210,18 +5460,124 @@ def auth_login(payload: AuthLogin) -> Dict[str, Any]:
     return {
         "ok": True,
         "user": {"id": row["id"], "email": row["email"], "created_at": row["created_at"]},
+        "provider": "local",
+        **token,
+    }
+
+
+@app.post("/auth/register")
+def auth_register(payload: AuthRegister, response: Response, request: Request) -> Dict[str, Any]:
+    if not supabase_is_configured():
+        result = local_auth_register(payload)
+        set_session_cookie(response, result["access_token"])
+        return result
+
+    email = normalize_email(payload.email)
+    redirect_to = f"{public_base_url(request)}/login?confirmed=1"
+    auth_result = supabase_auth_sign_up(
+        email=email,
+        password=payload.password,
+        email_redirect_to=redirect_to,
+    )
+    data = require_supabase_operation(auth_result)
+    external_user = data.get("user")
+    if not external_user:
+        raise HTTPException(status_code=502, detail="Supabase did not return a user.")
+    user = ensure_external_user(
+        external_user["id"],
+        external_user["email"] or email,
+        external_user.get("created_at"),
+    )
+    session = data.get("session")
+    result: Dict[str, Any] = {
+        "ok": True,
+        "user": user,
+        "provider": "supabase",
+        "confirmation_required": session is None,
+    }
+    if session:
+        token = create_access_token(user["id"])
+        set_session_cookie(response, token["access_token"])
+        result.update(token)
+    return result
+
+
+@app.post("/auth/login")
+def auth_login(payload: AuthLogin, response: Response) -> Dict[str, Any]:
+    if not supabase_is_configured():
+        result = local_auth_login(payload)
+        set_session_cookie(response, result["access_token"])
+        return result
+
+    email = normalize_email(payload.email)
+    auth_result = supabase_auth_sign_in(email=email, password=payload.password)
+    data = require_supabase_operation(auth_result)
+    external_user = data.get("user")
+    if not external_user:
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    user = ensure_external_user(
+        external_user["id"],
+        external_user["email"] or email,
+        external_user.get("created_at"),
+    )
+    token = create_access_token(user["id"])
+    set_session_cookie(response, token["access_token"])
+    return {
+        "ok": True,
+        "user": user,
+        "provider": "supabase",
         **token,
     }
 
 
 @app.post("/auth/logout")
-def auth_logout(_: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return {"ok": True, "message": "Logged out. Remove the JWT from the client."}
+def auth_logout(
+    response: Response,
+    _: Optional[Dict[str, Any]] = Depends(optional_current_user),
+) -> Dict[str, Any]:
+    clear_session_cookie(response)
+    return {"ok": True, "message": "Logged out."}
 
 
 @app.get("/auth/me")
 def auth_me(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     return {"ok": True, "user": user}
+
+
+@app.post("/auth/password-reset")
+def auth_password_reset(payload: PasswordResetRequest, request: Request) -> Dict[str, Any]:
+    if not supabase_is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Password reset requires Supabase Authentication.",
+        )
+    email = normalize_email(payload.email)
+    result = supabase_auth_request_password_reset(
+        email=email,
+        redirect_to=f"{public_base_url(request)}/reset-password",
+    )
+    require_supabase_operation(result)
+    return {
+        "ok": True,
+        "message": "If the account exists, a password reset link has been sent.",
+    }
+
+
+@app.post("/auth/password-update")
+def auth_password_update(payload: PasswordUpdateRequest) -> Dict[str, Any]:
+    if not supabase_is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Password reset requires Supabase Authentication.",
+        )
+    user = require_supabase_operation(
+        supabase_auth_update_password(
+            access_token=payload.access_token,
+            refresh_token=payload.refresh_token,
+            password=payload.password,
+        )
+    )
+    return {"ok": True, "user": user, "message": "Password updated."}
 
 
 def require_supabase_operation(result: Dict[str, Any]) -> Any:
@@ -6184,7 +6540,10 @@ def api_dashboard_recovery_analytics() -> Dict[str, Any]:
 
 
 @app.get("/api/failure-analysis")
-def api_failure_analysis(limit: int = Query(500, ge=1, le=2000)) -> Dict[str, Any]:
+def api_failure_analysis(
+    limit: int = Query(500, ge=1, le=2000),
+    _: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     return {"ok": True, **failure_analysis_payload(limit)}
 
 
@@ -6760,8 +7119,10 @@ def health() -> Dict[str, Any]:
     }
 
 
-@app.post("/v1/reliability/benchmark-runs")
-def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
+def persist_benchmark_run(
+    payload: BenchmarkRunCreate,
+    user_id: Optional[str] = None,
+) -> Dict[str, Any]:
     init_db()
     validate_counts(payload)
     run_id = payload.run_id or make_run_id(payload.model)
@@ -6790,15 +7151,16 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
             db.execute(
                 """
                 INSERT INTO benchmark_runs (
-                    run_id, model, provider_url, environment, total_workflows, successful,
+                    run_id, user_id, model, provider_url, environment, total_workflows, successful,
                     failed, success_rate, failure_rate, reliability_score_v2,
                     reliability_band_v2, average_execution_time, average_confidence,
                     created_at, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
+                    user_id,
                     payload.model,
                     payload.provider_url,
                     payload.environment,
@@ -6818,16 +7180,17 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
             db.execute(
                 """
                 INSERT INTO model_results (
-                    id, run_id, model, provider_url, success_rate, failure_rate,
+                    id, run_id, user_id, model, provider_url, success_rate, failure_rate,
                     retry_rate, recovery_rate, tool_reliability, timeout_rate,
                     average_execution_time, confidence_accuracy, reliability_score_v2,
                     reliability_band_v2, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f"model_result_{uuid.uuid4().hex[:12]}",
                     run_id,
+                    user_id,
                     payload.model,
                     payload.provider_url,
                     metrics.success_rate,
@@ -6846,18 +7209,19 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
             db.execute(
                 """
                 INSERT INTO reliability_scores (
-                    id, run_id, model, reliability_score_v1, reliability_score_v2,
+                    id, run_id, user_id, model, reliability_score_v1, reliability_score_v2,
                     reliability_band_v1, reliability_band_v2, success_rate, failure_rate,
                     retry_rate, recovery_rate, retry_success_rate, tool_reliability,
                     timeout_rate, confidence_accuracy, average_execution_time_ms,
                     execution_time_score, escalation_rate, workflow_completion_rate,
                     simulation_success_rate, simulation_gap, data_completeness, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f"score_{uuid.uuid4().hex[:12]}",
                     run_id,
+                    user_id,
                     payload.model,
                     metrics.reliability_score_v1,
                     metrics.reliability_score_v2,
@@ -6933,6 +7297,7 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
     supabase_sync = supabase_save_benchmark_run(
         {
             "run_id": run_id,
+            "user_id": user_id,
             "model": payload.model,
             "provider_url": payload.provider_url,
             "environment": payload.environment,
@@ -6970,42 +7335,60 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
     }
 
 
+@app.post("/v1/reliability/benchmark-runs")
+def create_benchmark_run(
+    payload: BenchmarkRunCreate,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    return persist_benchmark_run(payload, user["id"])
+
+
 @app.get("/api/benchmark-runner/history")
-def benchmark_runner_history(limit: int = Query(20, ge=1, le=200)) -> Dict[str, Any]:
+def benchmark_runner_history(
+    limit: int = Query(20, ge=1, le=200),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     init_db()
     with connect() as db:
         rows = db.execute(
             """
             SELECT *
             FROM benchmark_runs
+            WHERE user_id = ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (user["id"], limit),
         ).fetchall()
     return {
         "ok": True,
-        "overview": dashboard_overview_payload(),
-        "trends": dashboard_trends_payload(),
+        "overview": user_benchmark_overview(user["id"]),
+        "trends": user_benchmark_trends(user["id"]),
         "runs": [row_to_dict(row) for row in rows],
     }
 
 
 @app.post("/api/benchmark-runner/run")
-def run_benchmark_from_runner(payload: BenchmarkRunnerRequest) -> Dict[str, Any]:
+def run_benchmark_from_runner(
+    payload: BenchmarkRunnerRequest,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     benchmark_payload = build_simulated_benchmark_payload(payload)
-    result = create_benchmark_run(benchmark_payload)
+    result = persist_benchmark_run(benchmark_payload, user["id"])
     return {
         "ok": True,
         "message": "Benchmark run completed.",
         **result,
-        "overview": dashboard_overview_payload(),
-        "trends": dashboard_trends_payload(),
+        "overview": user_benchmark_overview(user["id"]),
+        "trends": user_benchmark_trends(user["id"]),
     }
 
 
 @app.post("/api/benchmark-runner/sample-data")
-def generate_benchmark_sample_data(payload: BenchmarkSampleRequest) -> Dict[str, Any]:
+def generate_benchmark_sample_data(
+    payload: BenchmarkSampleRequest,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     scenarios = ["success", "mixed", "failure", "mixed", "success", "mixed"]
     created: List[Dict[str, Any]] = []
     for index in range(payload.runs):
@@ -7019,7 +7402,10 @@ def generate_benchmark_sample_data(payload: BenchmarkSampleRequest) -> Dict[str,
             target_success_rate=target,
             seed=payload.seed + index if payload.seed is not None else None,
         )
-        result = create_benchmark_run(build_simulated_benchmark_payload(request, run_index=index, sample_mode=True))
+        result = persist_benchmark_run(
+            build_simulated_benchmark_payload(request, run_index=index, sample_mode=True),
+            user["id"],
+        )
         created.append(
             {
                 "run_id": result["run"]["run_id"],
@@ -7033,8 +7419,8 @@ def generate_benchmark_sample_data(payload: BenchmarkSampleRequest) -> Dict[str,
         "ok": True,
         "message": f"Generated {len(created)} sample benchmark runs.",
         "created": created,
-        "overview": dashboard_overview_payload(),
-        "trends": dashboard_trends_payload(),
+        "overview": user_benchmark_overview(user["id"]),
+        "trends": user_benchmark_trends(user["id"]),
     }
 
 
@@ -7042,12 +7428,13 @@ def generate_benchmark_sample_data(payload: BenchmarkSampleRequest) -> Dict[str,
 def list_benchmark_runs(
     limit: int = Query(50, ge=1, le=500),
     model: Optional[str] = None,
+    user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
     init_db()
-    query = "SELECT * FROM benchmark_runs"
-    params: List[Any] = []
+    query = "SELECT * FROM benchmark_runs WHERE user_id = ?"
+    params: List[Any] = [user["id"]]
     if model:
-        query += " WHERE model = ?"
+        query += " AND model = ?"
         params.append(model)
     query += " ORDER BY created_at DESC LIMIT ?"
     params.append(limit)
@@ -7057,8 +7444,18 @@ def list_benchmark_runs(
 
 
 @app.get("/v1/reliability/benchmark-runs/{run_id}")
-def get_benchmark_run(run_id: str) -> Dict[str, Any]:
+def get_benchmark_run(
+    run_id: str,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     init_db()
+    with connect() as db:
+        owned = db.execute(
+            "SELECT 1 FROM benchmark_runs WHERE run_id = ? AND user_id = ?",
+            (run_id, user["id"]),
+        ).fetchone()
+    if not owned:
+        raise HTTPException(status_code=404, detail="Benchmark run not found.")
     return {
         "ok": True,
         "run": fetch_run(run_id),
@@ -7068,8 +7465,12 @@ def get_benchmark_run(run_id: str) -> Dict[str, Any]:
 
 
 @app.get("/v1/reliability/benchmark-runs/{run_id}/report")
-def get_benchmark_report(run_id: str) -> Dict[str, Any]:
+def get_benchmark_report(
+    run_id: str,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     init_db()
+    get_benchmark_run(run_id, user)
     run = fetch_run(run_id)
     score = fetch_score(run_id)
     workflows = fetch_workflows(run_id)
@@ -7084,13 +7485,20 @@ def get_benchmark_report(run_id: str) -> Dict[str, Any]:
 
 
 @app.get("/v1/reliability/benchmark-runs/{run_id}/export.md", response_class=PlainTextResponse)
-def export_benchmark_markdown(run_id: str) -> str:
+def export_benchmark_markdown(
+    run_id: str,
+    user: Dict[str, Any] = Depends(current_user),
+) -> str:
     init_db()
+    get_benchmark_run(run_id, user)
     return build_markdown_report(fetch_run(run_id), fetch_score(run_id), fetch_workflows(run_id))
 
 
 @app.get("/v1/reliability/leaderboard")
-def leaderboard(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
+def leaderboard(
+    limit: int = Query(20, ge=1, le=100),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     init_db()
     with connect() as db:
         rows = db.execute(
@@ -7103,11 +7511,12 @@ def leaderboard(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
                 AVG(average_execution_time) AS average_execution_time,
                 COUNT(*) AS benchmark_runs
             FROM model_results
+            WHERE user_id = ?
             GROUP BY model
             ORDER BY reliability_score_v2 DESC, success_rate DESC
             LIMIT ?
             """,
-            (limit,),
+            (user["id"], limit),
         ).fetchall()
     entries = []
     for index, row in enumerate(rows, start=1):
@@ -7118,17 +7527,22 @@ def leaderboard(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
 
 
 @app.get("/v1/reliability/compare/models")
-def compare_models(models: Optional[str] = None) -> Dict[str, Any]:
+def compare_models(
+    models: Optional[str] = None,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     init_db()
     selected = [item.strip() for item in (models or "").split(",") if item.strip()]
     params: List[Any] = []
     query = """
         SELECT *
         FROM model_results
+        WHERE user_id = ?
     """
+    params.append(user["id"])
     if selected:
         placeholders = ",".join("?" for _ in selected)
-        query += f" WHERE model IN ({placeholders})"
+        query += f" AND model IN ({placeholders})"
         params.extend(selected)
     query += " ORDER BY reliability_score_v2 DESC, success_rate DESC, created_at DESC"
     with connect() as db:
@@ -7141,20 +7555,23 @@ def compare_models(models: Optional[str] = None) -> Dict[str, Any]:
 
 
 @app.get("/v1/reliability/dashboard")
-def dashboard() -> Dict[str, Any]:
+def dashboard(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     init_db()
     with connect() as db:
         latest = db.execute(
-            "SELECT * FROM benchmark_runs ORDER BY created_at DESC LIMIT 1"
+            "SELECT * FROM benchmark_runs WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
+            (user["id"],),
         ).fetchone()
         trend_rows = db.execute(
             """
             SELECT created_at, model, reliability_score_v2, success_rate, failure_rate,
                    average_execution_time, average_confidence
             FROM benchmark_runs
+            WHERE user_id = ?
             ORDER BY created_at ASC
             LIMIT 200
-            """
+            """,
+            (user["id"],),
         ).fetchall()
     return {
         "ok": True,
