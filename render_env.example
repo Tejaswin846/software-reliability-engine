@@ -38,3 +38,8 @@ SOFTWARE_PRODUCTION_HOSTS=
 SOFTWARE_REDIRECT_HOSTS=
 SOFTWARE_FORCE_HTTPS=true
 SOFTWARE_REDIRECT_WWW=true
+
+# Optional Supabase persistence for chats, messages, and benchmark mirrors.
+# Run supabase_schema.sql in the Supabase SQL editor before setting these.
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=replace-with-your-supabase-anon-key

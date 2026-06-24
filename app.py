@@ -39,6 +39,23 @@ except ImportError:
         init_db as init_reliability_db,
     )
 
+try:
+    from .supabase_client import (
+        create_chat as supabase_create_chat,
+        get_chat_history as supabase_get_chat_history,
+        save_benchmark_run as supabase_save_benchmark_run,
+        save_message as supabase_save_message,
+        supabase_health_check,
+    )
+except ImportError:
+    from supabase_client import (
+        create_chat as supabase_create_chat,
+        get_chat_history as supabase_get_chat_history,
+        save_benchmark_run as supabase_save_benchmark_run,
+        save_message as supabase_save_message,
+        supabase_health_check,
+    )
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -1583,6 +1600,18 @@ class AuthRegister(BaseModel):
 class AuthLogin(BaseModel):
     email: str = Field(..., min_length=3, max_length=320)
     password: str = Field(..., min_length=1, max_length=200)
+
+
+class ChatCreate(BaseModel):
+    title: str = Field("New chat", min_length=1, max_length=240)
+    project_id: Optional[str] = Field(None, max_length=180)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ChatMessageCreate(BaseModel):
+    role: str = Field(..., pattern="^(user|assistant|system|tool)$")
+    content: str = Field(..., min_length=1, max_length=50000)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ProjectCreate(BaseModel):
@@ -4874,6 +4903,7 @@ def startup() -> None:
 @app.get("/health")
 def health_check(response: Response) -> Dict[str, Any]:
     checks = run_startup_checks()
+    supabase = supabase_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -4886,6 +4916,7 @@ def health_check(response: Response) -> Dict[str, Any]:
             "api_database": checks["api_database"]["ok"],
             "reliability_database": checks["reliability_database"]["ok"],
             "dashboard_assets": checks["dashboard_assets"]["ok"],
+            "supabase": supabase,
         },
     }
 
@@ -4903,6 +4934,7 @@ def version() -> Dict[str, Any]:
 @app.get("/status")
 def status(response: Response) -> Dict[str, Any]:
     checks = run_startup_checks()
+    supabase = supabase_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -4914,6 +4946,7 @@ def status(response: Response) -> Dict[str, Any]:
         "dashboard_url": "/dashboard",
         "api_docs_enabled": ENVIRONMENT != "production",
         "domain": domain_config_payload(),
+        "supabase": supabase,
         "startup_checks": checks,
     }
 
@@ -5189,6 +5222,103 @@ def auth_logout(_: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
 @app.get("/auth/me")
 def auth_me(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     return {"ok": True, "user": user}
+
+
+def require_supabase_operation(result: Dict[str, Any]) -> Any:
+    if result.get("ok"):
+        return result.get("data")
+    status_code = 503 if not result.get("available") else 502
+    raise HTTPException(
+        status_code=status_code,
+        detail=result.get("error") or "Supabase operation failed.",
+    )
+
+
+@app.get("/api/supabase/health")
+def api_supabase_health() -> Dict[str, Any]:
+    health = supabase_health_check()
+    return {"ok": health["ok"], "supabase": health}
+
+
+@app.post("/api/chats")
+def create_chat(
+    payload: ChatCreate,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    if payload.project_id:
+        init_db()
+        with connect() as db:
+            user_project_or_404(db, user["id"], payload.project_id)
+    result = supabase_create_chat(
+        user_id=user["id"],
+        project_id=payload.project_id,
+        title=payload.title,
+        metadata=payload.metadata,
+    )
+    return {
+        "ok": True,
+        "chat": require_supabase_operation(result),
+        "storage": "supabase",
+    }
+
+
+@app.post("/api/chats/{chat_id}/messages")
+def save_chat_message(
+    chat_id: str,
+    payload: ChatMessageCreate,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    history_result = supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
+    history = require_supabase_operation(history_result)
+    if history["chat"] is None:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    result = supabase_save_message(
+        chat_id=chat_id,
+        user_id=user["id"],
+        role=payload.role,
+        content=payload.content,
+        metadata=payload.metadata,
+    )
+    return {
+        "ok": True,
+        "message": require_supabase_operation(result),
+        "storage": "supabase",
+    }
+
+
+@app.get("/api/chats/{chat_id}")
+def open_chat(
+    chat_id: str,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    history = require_supabase_operation(
+        supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
+    )
+    if history["chat"] is None:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    return {
+        "ok": True,
+        **history,
+        "storage": "supabase",
+    }
+
+
+@app.get("/api/chats/{chat_id}/messages")
+def get_chat_messages(
+    chat_id: str,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    history = require_supabase_operation(
+        supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
+    )
+    if history["chat"] is None:
+        raise HTTPException(status_code=404, detail="Chat not found.")
+    return {
+        "ok": True,
+        "chat_id": chat_id,
+        "messages": history["messages"],
+        "storage": "supabase",
+    }
 
 
 @app.post("/api/orgs")
@@ -6800,12 +6930,43 @@ def create_benchmark_run(payload: BenchmarkRunCreate) -> Dict[str, Any]:
         raise HTTPException(status_code=409, detail=f"Could not create benchmark run: {error}") from error
 
     sync_benchmark_to_dashboard_db(run_id, payload, metrics, created_at)
+    supabase_sync = supabase_save_benchmark_run(
+        {
+            "run_id": run_id,
+            "model": payload.model,
+            "provider_url": payload.provider_url,
+            "environment": payload.environment,
+            "total_workflows": payload.total_workflows,
+            "successful": payload.successful,
+            "failed": payload.failed,
+            "success_rate": metrics.success_rate,
+            "failure_rate": metrics.failure_rate,
+            "reliability_score_v2": metrics.reliability_score_v2,
+            "reliability_band_v2": metrics.reliability_band_v2,
+            "average_execution_time": payload.average_execution_time,
+            "average_confidence": payload.average_confidence,
+            "retries": payload.retries,
+            "rollbacks": payload.rollbacks,
+            "escalations": payload.escalations,
+            "stops": payload.stops,
+            "tool_reliability": metrics.tool_reliability,
+            "timeout_rate": metrics.timeout_rate,
+            "created_at": created_at,
+            "metadata": payload.metadata,
+            "workflow_results": [workflow.model_dump() for workflow in payload.workflows],
+        }
+    )
 
     return {
         "ok": True,
         "run": fetch_run(run_id),
         "score": fetch_score(run_id),
         "workflow_results_count": len(payload.workflows),
+        "supabase_sync": {
+            "ok": bool(supabase_sync.get("ok")),
+            "available": bool(supabase_sync.get("available")),
+            "error": supabase_sync.get("error"),
+        },
     }
 
 

@@ -262,6 +262,14 @@ POST /api/sdk/workflows/predict
 POST /api/sdk/workflows/complete
 ```
 
+## Supabase Persistence
+
+Software can mirror benchmark runs and persist authenticated chat history in
+Supabase. Configure `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then run
+[`supabase_schema.sql`](supabase_schema.sql) in the Supabase SQL editor.
+
+Setup and API details are in [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md).
+
 ## Production Notes
 
 Set these environment variables:
