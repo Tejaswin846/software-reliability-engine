@@ -39,6 +39,13 @@ class ChatMemoryIntegrationTests(unittest.TestCase):
             patch.object(app, "qdrant_search_memory", side_effect=search_memory),
             patch.object(app, "supabase_save_message", side_effect=save_message),
             patch.object(app, "qdrant_save_memory", side_effect=save_memory),
+            patch.object(app, "redis_get_conversation_state", return_value=None),
+            patch.object(
+                app,
+                "redis_get_cached_ai_response",
+                return_value={"response": "Use qwen.", "model": None},
+            ),
+            patch.object(app, "redis_set_conversation_state", return_value=True),
         ):
             result = app.save_chat_message(
                 "chat-1",
@@ -49,6 +56,44 @@ class ChatMemoryIntegrationTests(unittest.TestCase):
         self.assertEqual(call_order, ["search", "message", "memory"])
         self.assertEqual(result["memory_context"][0]["text"], "Existing preference")
         self.assertTrue(result["memory_save"]["stored"])
+        self.assertEqual(result["cached_ai_response"]["response"], "Use qwen.")
+
+    def test_assistant_message_populates_response_cache(self):
+        history = {
+            "chat": {"id": "chat-1"},
+            "messages": [{"id": "message-1", "role": "user", "content": "Explain Redis."}],
+        }
+        saved = {
+            "ok": True,
+            "available": True,
+            "data": {
+                "id": "message-2",
+                "role": "assistant",
+                "content": "Redis is an in-memory data store.",
+            },
+        }
+        with (
+            patch.object(app, "redis_get_conversation_state", return_value=history),
+            patch.object(app, "supabase_save_message", return_value=saved),
+            patch.object(app, "redis_set_conversation_state", return_value=True),
+            patch.object(
+                app,
+                "redis_cache_ai_response",
+                return_value={"ok": True, "cached": True},
+            ) as cache_response,
+        ):
+            result = app.save_chat_message(
+                "chat-1",
+                app.ChatMessageCreate(
+                    role="assistant",
+                    content="Redis is an in-memory data store.",
+                    metadata={"prompt": "Explain Redis.", "model": "qwen"},
+                ),
+                {"id": "user-1"},
+            )
+
+        cache_response.assert_called_once()
+        self.assertTrue(result["response_cache"]["cached"])
 
 
 if __name__ == "__main__":

@@ -93,6 +93,22 @@ function renderOverview(overview) {
   setText("last-updated", `Last updated: ${formatDate(overview.last_updated)}`);
 }
 
+function renderRedis(redis) {
+  const status = redis?.status || "Not configured";
+  const connected = Boolean(redis?.connected);
+  setText("redis-status", status);
+  setText("redis-latency", connected ? formatLatency(redis.latency_ms) : "--");
+  setText("redis-cache-hits", formatNumber(redis?.cache_hits));
+  setText("redis-cache-misses", formatNumber(redis?.cache_misses));
+  setText("redis-memory", redis?.memory_usage || "Unavailable");
+  setText("redis-queue-depth", formatNumber(redis?.queue_depth));
+  setText("redis-hit-rate", formatPercent(redis?.cache_hit_rate));
+  const dot = byId("redis-status-dot");
+  if (dot) {
+    dot.classList.toggle("connected", connected);
+  }
+}
+
 function formatQuota(value) {
   return value === null || value === undefined ? "Unlimited" : formatNumber(value);
 }
@@ -583,6 +599,7 @@ async function loadDashboard() {
     }
     const payload = await response.json();
     renderOverview(payload.overview || {});
+    renderRedis(payload.redis || {});
     renderTeamWorkspaces(payload.team_workspaces || {});
     renderModelLeaderboard(payload.model_leaderboard || []);
     renderToolReliability(payload.tool_reliability || []);

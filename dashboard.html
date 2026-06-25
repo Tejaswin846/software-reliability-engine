@@ -57,6 +57,43 @@
 
       <section class="panel">
         <div class="section-header">
+          <h2>Redis Infrastructure</h2>
+          <span class="muted">Caching, sessions, queues, and workflow locks</span>
+        </div>
+        <div class="redis-status-row">
+          <span id="redis-status-dot" class="connection-dot"></span>
+          <strong id="redis-status">Loading...</strong>
+        </div>
+        <div class="metric-grid tight redis-metrics">
+          <article class="metric">
+            <span>Latency</span>
+            <strong id="redis-latency">--</strong>
+          </article>
+          <article class="metric">
+            <span>Cache Hits</span>
+            <strong id="redis-cache-hits">--</strong>
+          </article>
+          <article class="metric">
+            <span>Cache Misses</span>
+            <strong id="redis-cache-misses">--</strong>
+          </article>
+          <article class="metric">
+            <span>Memory Usage</span>
+            <strong id="redis-memory">--</strong>
+          </article>
+          <article class="metric">
+            <span>Queue Depth</span>
+            <strong id="redis-queue-depth">--</strong>
+          </article>
+          <article class="metric">
+            <span>Cache Hit Rate</span>
+            <strong id="redis-hit-rate">--</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="section-header">
           <h2>Usage & Billing</h2>
           <a class="small-link" href="/pricing">Upgrade</a>
         </div>

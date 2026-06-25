@@ -124,6 +124,40 @@ non-idempotent action could send a duplicate email, message, or calendar event.
 See [CONNECTED_APPS.md](CONNECTED_APPS.md) for the complete flow and operations
 guide.
 
+## Upstash Redis
+
+Software uses Upstash Redis only for ephemeral infrastructure:
+
+- AI response caching
+- temporary conversation snapshots
+- authenticated session caching
+- background job queues
+- API rate limiting
+- distributed workflow locks
+
+Qdrant remains the long-term semantic memory store, and Supabase remains the
+durable chat source of truth.
+
+Configure the official Upstash Redis Python SDK with environment variables:
+
+```text
+UPSTASH_REDIS_REST_URL=https://your-database.upstash.io
+UPSTASH_REDIS_REST_TOKEN=replace-with-your-upstash-rest-token
+```
+
+The SDK performs HTTP retry automatically. Software additionally recreates the
+client after transport failures and degrades gracefully when Redis is not
+configured. Operational status is available at:
+
+```text
+GET /api/integrations/redis/health
+```
+
+The dashboard displays connection status, latency, cache hits, cache misses,
+cache hit rate, queue depth, and Redis memory usage. See
+[UPSTASH_REDIS.md](UPSTASH_REDIS.md) for the complete architecture and
+configuration reference.
+
 ## Why Software Exists
 
 AI agents often work in demos and simulations, then fail in real execution because of:
@@ -376,6 +410,11 @@ Qdrant Cloud provides user-scoped long-term chat memory when `QDRANT_URL` and
 `QDRANT_API_KEY` are configured. User messages are stored in the
 `software_memory` collection, relevant memories are returned as
 `memory_context`, and Qdrant outages do not interrupt chat persistence.
+
+Upstash Redis provides short-lived caches, conversation and session state,
+queues, rate limits, and distributed locks when
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are configured. Redis
+does not replace Qdrant memory or durable Supabase chat storage.
 
 ## Production Notes
 

@@ -221,6 +221,30 @@ h3 {
   border-color: #bfe4d6;
 }
 
+.redis-status-row {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  margin-bottom: 14px;
+}
+
+.connection-dot {
+  background: var(--danger);
+  border-radius: 50%;
+  display: inline-block;
+  height: 10px;
+  width: 10px;
+}
+
+.connection-dot.connected {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.redis-metrics .metric strong {
+  font-size: 20px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }

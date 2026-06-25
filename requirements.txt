@@ -12,3 +12,4 @@ sentry-sdk[fastapi]==2.63.0
 composio==0.16.0
 composio-openai-agents==0.16.0
 cryptography>=43,<50
+upstash-redis==1.7.0

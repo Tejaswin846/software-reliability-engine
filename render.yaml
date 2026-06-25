@@ -44,6 +44,28 @@ services:
         generateValue: true
       - key: INTEGRATION_STATE_SECRET
         generateValue: true
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: SOFTWARE_REDIS_KEY_PREFIX
+        value: software
+      - key: SOFTWARE_AI_CACHE_TTL_SECONDS
+        value: "3600"
+      - key: SOFTWARE_CONVERSATION_STATE_TTL_SECONDS
+        value: "21600"
+      - key: SOFTWARE_SESSION_CACHE_TTL_SECONDS
+        value: "3600"
+      - key: SOFTWARE_REDIS_QUEUE_MAX_LENGTH
+        value: "10000"
+      - key: SOFTWARE_REDIS_RETRIES
+        value: "2"
+      - key: SOFTWARE_REDIS_RETRY_INTERVAL_SECONDS
+        value: "0.25"
+      - key: SOFTWARE_API_RATE_LIMIT_REQUESTS
+        value: "300"
+      - key: SOFTWARE_API_RATE_LIMIT_WINDOW_SECONDS
+        value: "60"
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET

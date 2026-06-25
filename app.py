@@ -20,7 +20,7 @@ import bcrypt
 import jwt
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 import sentry_sdk
 
@@ -125,6 +125,37 @@ try:
 except ImportError:
     from integrations.routes import create_integrations_router
 
+try:
+    from .redis_client import (
+        cache_ai_response as redis_cache_ai_response,
+        check_rate_limit as redis_check_rate_limit,
+        delete_session_cache as redis_delete_session_cache,
+        distributed_lock as redis_distributed_lock,
+        enqueue_background_job as redis_enqueue_background_job,
+        get_cached_ai_response as redis_get_cached_ai_response,
+        get_conversation_state as redis_get_conversation_state,
+        get_session_cache as redis_get_session_cache,
+        initialize_redis,
+        redis_health_check,
+        set_conversation_state as redis_set_conversation_state,
+        set_session_cache as redis_set_session_cache,
+    )
+except ImportError:
+    from redis_client import (
+        cache_ai_response as redis_cache_ai_response,
+        check_rate_limit as redis_check_rate_limit,
+        delete_session_cache as redis_delete_session_cache,
+        distributed_lock as redis_distributed_lock,
+        enqueue_background_job as redis_enqueue_background_job,
+        get_cached_ai_response as redis_get_cached_ai_response,
+        get_conversation_state as redis_get_conversation_state,
+        get_session_cache as redis_get_session_cache,
+        initialize_redis,
+        redis_health_check,
+        set_conversation_state as redis_set_conversation_state,
+        set_session_cache as redis_set_session_cache,
+    )
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -170,6 +201,10 @@ PRODUCTION_REDIRECT_HOSTS = {
 }
 FORCE_HTTPS = os.getenv("SOFTWARE_FORCE_HTTPS", "false").lower() == "true"
 REDIRECT_WWW = os.getenv("SOFTWARE_REDIRECT_WWW", "true").lower() == "true"
+API_RATE_LIMIT_REQUESTS = int(os.getenv("SOFTWARE_API_RATE_LIMIT_REQUESTS", "300"))
+API_RATE_LIMIT_WINDOW_SECONDS = int(
+    os.getenv("SOFTWARE_API_RATE_LIMIT_WINDOW_SECONDS", "60")
+)
 DB_PATH = Path(os.getenv("SOFTWARE_API_DB_PATH", DATA_DIR / "software_reliability.db")).expanduser()
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
 STARTUP_CHECKS: Dict[str, Any] = {}
@@ -1831,6 +1866,10 @@ def bearer_token(authorization: Optional[str]) -> Optional[str]:
     return authorization.strip()
 
 
+def session_cache_id(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def set_session_cookie(response: Response, access_token: str) -> None:
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -1894,24 +1933,42 @@ def authenticated_user_from_token(token: str) -> Dict[str, Any]:
     except HTTPException as local_error:
         if not supabase_is_configured():
             raise local_error
+        cached_external = redis_get_session_cache(session_cache_id(token))
+        if cached_external and cached_external.get("user"):
+            return dict(cached_external["user"])
         result = supabase_auth_get_user(token)
         if not result.get("ok") or not result.get("data"):
             raise HTTPException(status_code=401, detail="Invalid session.")
         external = result["data"]
         if not external.get("id") or not external.get("email"):
             raise HTTPException(status_code=401, detail="Supabase user is incomplete.")
-        return ensure_external_user(
+        user = ensure_external_user(
             external["id"],
             external["email"],
             external.get("created_at"),
         )
+        redis_set_session_cache(
+            session_cache_id(token),
+            {"user": user, "provider": "supabase"},
+        )
+        return user
 
+    cached_local = redis_get_session_cache(session_cache_id(token))
+    if cached_local and cached_local.get("user"):
+        cached_user = dict(cached_local["user"])
+        if str(cached_user.get("id")) == user_id:
+            return cached_user
     init_db()
     with connect() as db:
         row = db.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
     if not row:
         raise HTTPException(status_code=401, detail="User no longer exists.")
-    return row_to_dict(row)
+    user = row_to_dict(row)
+    redis_set_session_cache(
+        session_cache_id(token),
+        {"user": user, "provider": "local"},
+    )
+    return user
 
 
 def current_user(
@@ -4962,6 +5019,7 @@ def dashboard_payload() -> Dict[str, Any]:
         "copilot": copilot_dashboard_payload(),
         "optimizer": optimizer_dashboard_payload(),
         "meta_reliability": meta_reliability_dashboard_payload(),
+        "redis": redis_health_check(),
         "team_workspaces": {
             "organizations": [],
             "members": [],
@@ -5013,6 +5071,7 @@ def user_dashboard_payload(user: Dict[str, Any]) -> Dict[str, Any]:
         "copilot": copilot,
         "optimizer": optimizer,
         "meta_reliability": meta_reliability,
+        "redis": redis_health_check(),
         "team_workspaces": team_workspaces,
         "sdk_workflows": sdk,
         "model_leaderboard": user_benchmark_leaderboard(user["id"]),
@@ -5171,6 +5230,7 @@ def run_startup_checks() -> Dict[str, Any]:
         "dashboard_assets": dashboard_asset_check(),
         "monitoring": sentry_health_check(),
         "composio": composio_health_check(),
+        "redis": redis_health_check(),
     }
     checks["ok"] = all(
         check.get("ok") is True
@@ -5271,6 +5331,50 @@ async def sentry_request_context(request: Request, call_next):
 
 
 @app.middleware("http")
+async def redis_api_rate_limit(request: Request, call_next):
+    path = request.url.path
+    protected_prefix = path.startswith("/api/") or path.startswith("/v1/") or path.startswith("/auth/")
+    excluded = path in {
+        "/api/integrations/redis/health",
+        "/api/memory/health",
+        "/api/supabase/health",
+    }
+    if not protected_prefix or excluded:
+        return await call_next(request)
+
+    authorization = request.headers.get("authorization")
+    token = bearer_token(authorization) or request.cookies.get(SESSION_COOKIE_NAME)
+    client_host = request.client.host if request.client else "unknown"
+    identity = token or client_host
+    rate = redis_check_rate_limit(
+        identity,
+        limit=API_RATE_LIMIT_REQUESTS,
+        window_seconds=API_RATE_LIMIT_WINDOW_SECONDS,
+        scope="http-api",
+    )
+    headers = {
+        "X-RateLimit-Limit": str(rate["limit"]),
+        "X-RateLimit-Remaining": str(rate["remaining"]),
+        "X-RateLimit-Reset": str(rate["reset_seconds"]),
+    }
+    if not rate["allowed"]:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "ok": False,
+                "detail": "API rate limit exceeded. Retry after the reset window.",
+                "retry_after_seconds": rate["reset_seconds"],
+            },
+            headers={**headers, "Retry-After": str(rate["reset_seconds"])},
+        )
+    response = await call_next(request)
+    response.headers.update(headers)
+    if rate.get("degraded"):
+        response.headers["X-RateLimit-Status"] = "degraded"
+    return response
+
+
+@app.middleware("http")
 async def production_domain_redirects(request: Request, call_next):
     target_url = domain_redirect_target(request)
     if target_url:
@@ -5317,6 +5421,7 @@ def startup() -> None:
     monitoring = initialize_sentry()
     if monitoring["configured"] and not monitoring["initialized"]:
         LOGGER.error("Sentry is configured but failed to initialize: %s", monitoring["error"])
+    initialize_redis()
     initialize_composio()
     run_startup_checks()
 
@@ -5328,6 +5433,7 @@ def health_check(response: Response) -> Dict[str, Any]:
     memory = memory_health_check()
     monitoring = sentry_health_check()
     composio_status = composio_health_check()
+    redis_status = redis_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -5344,6 +5450,7 @@ def health_check(response: Response) -> Dict[str, Any]:
             "memory": memory,
             "monitoring": monitoring,
             "composio": composio_status,
+            "redis": redis_status,
         },
     }
 
@@ -5365,6 +5472,7 @@ def status(response: Response) -> Dict[str, Any]:
     memory = memory_health_check()
     monitoring = sentry_health_check()
     composio_status = composio_health_check()
+    redis_status = redis_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -5380,6 +5488,7 @@ def status(response: Response) -> Dict[str, Any]:
         "memory": memory,
         "monitoring": monitoring,
         "composio": composio_status,
+        "redis": redis_status,
         "startup_checks": checks,
     }
 
@@ -5393,6 +5502,7 @@ def metrics() -> Dict[str, Any]:
     optimizer = optimizer_stats_payload()
     prediction = dashboard_prediction_payload()
     sdk = dashboard_sdk_payload()
+    redis_status = redis_health_check()
     return {
         "ok": True,
         "service": APP_NAME,
@@ -5426,6 +5536,13 @@ def metrics() -> Dict[str, Any]:
             "sdk_workflows": sdk["total_workflows"],
             "sdk_success_rate": sdk["success_rate"],
             "sdk_failure_rate": sdk["failure_rate"],
+            "redis_connected": redis_status["connected"],
+            "redis_latency_ms": redis_status["latency_ms"],
+            "redis_cache_hits": redis_status["cache_hits"],
+            "redis_cache_misses": redis_status["cache_misses"],
+            "redis_cache_hit_rate": redis_status["cache_hit_rate"],
+            "redis_memory_usage_bytes": redis_status["memory_usage_bytes"],
+            "redis_queue_depth": redis_status["queue_depth"],
         },
     }
 
@@ -5782,9 +5899,14 @@ def auth_login(payload: AuthLogin, response: Response) -> Dict[str, Any]:
 
 @app.post("/auth/logout")
 def auth_logout(
+    request: Request,
     response: Response,
+    authorization: Optional[str] = Header(None),
     _: Optional[Dict[str, Any]] = Depends(optional_current_user),
 ) -> Dict[str, Any]:
+    token = bearer_token(authorization) or request.cookies.get(SESSION_COOKIE_NAME)
+    if token:
+        redis_delete_session_cache(session_cache_id(token))
     clear_session_cookie(response)
     return {"ok": True, "message": "Logged out."}
 
@@ -5850,6 +5972,14 @@ def api_supabase_health() -> Dict[str, Any]:
 def api_memory_health() -> Dict[str, Any]:
     health = memory_health_check()
     return {"ok": health["ok"], "memory": health}
+
+
+@app.get("/api/integrations/redis/health")
+def api_redis_health(response: Response) -> Dict[str, Any]:
+    health = redis_health_check()
+    if health["configured"] and not health["connected"]:
+        response.status_code = 503
+    return {"ok": health["ok"], "redis": health}
 
 
 @app.get("/api/composio/health")
@@ -5923,9 +6053,16 @@ def create_chat(
         title=payload.title,
         metadata=payload.metadata,
     )
+    chat = require_supabase_operation(result)
+    if chat and chat.get("id"):
+        redis_set_conversation_state(
+            user["id"],
+            chat["id"],
+            {"chat": chat, "messages": []},
+        )
     return {
         "ok": True,
-        "chat": require_supabase_operation(result),
+        "chat": chat,
         "storage": "supabase",
     }
 
@@ -5936,15 +6073,24 @@ def save_chat_message(
     payload: ChatMessageCreate,
     user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
-    history_result = supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
-    history = require_supabase_operation(history_result)
+    history = redis_get_conversation_state(user["id"], chat_id)
+    if history is None:
+        history_result = supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
+        history = require_supabase_operation(history_result)
     if history["chat"] is None:
         raise HTTPException(status_code=404, detail="Chat not found.")
     relevant_memories: List[Dict[str, Any]] = []
+    cached_ai_response: Optional[Dict[str, Any]] = None
+    model = str(payload.metadata.get("model") or "") or None
     if payload.role == "user":
         relevant_memories = qdrant_search_memory(
             user["id"],
             payload.content,
+        )
+        cached_ai_response = redis_get_cached_ai_response(
+            user["id"],
+            payload.content,
+            model=model,
         )
     result = supabase_save_message(
         chat_id=chat_id,
@@ -5959,12 +6105,36 @@ def save_chat_message(
         if payload.role == "user"
         else {"ok": True, "stored": False, "reason": "Only user messages are stored."}
     )
+    response_cache = {"ok": True, "cached": False}
+    if payload.role == "assistant":
+        source_prompt = str(
+            payload.metadata.get("prompt")
+            or payload.metadata.get("request")
+            or ""
+        ).strip()
+        if source_prompt:
+            response_cache = redis_cache_ai_response(
+                user["id"],
+                source_prompt,
+                payload.content,
+                model=model,
+                metadata={"chat_id": chat_id},
+            )
+    messages = list(history.get("messages") or [])
+    messages.append(message)
+    redis_set_conversation_state(
+        user["id"],
+        chat_id,
+        {"chat": history["chat"], "messages": messages},
+    )
     return {
         "ok": True,
         "message": message,
         "storage": "supabase",
         "memory_context": relevant_memories,
         "memory_save": memory_save,
+        "cached_ai_response": cached_ai_response,
+        "response_cache": response_cache,
     }
 
 
@@ -5973,15 +6143,24 @@ def open_chat(
     chat_id: str,
     user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
-    history = require_supabase_operation(
-        supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
-    )
+    history = redis_get_conversation_state(user["id"], chat_id)
+    storage = "redis_cache"
+    if history is None:
+        history = require_supabase_operation(
+            supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
+        )
+        storage = "supabase"
     if history["chat"] is None:
         raise HTTPException(status_code=404, detail="Chat not found.")
+    redis_set_conversation_state(
+        user["id"],
+        chat_id,
+        {"chat": history["chat"], "messages": history.get("messages") or []},
+    )
     return {
         "ok": True,
         **history,
-        "storage": "supabase",
+        "storage": storage,
         "recent_memories": qdrant_get_recent_memories(user["id"]),
     }
 
@@ -5991,16 +6170,25 @@ def get_chat_messages(
     chat_id: str,
     user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
-    history = require_supabase_operation(
-        supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
-    )
+    history = redis_get_conversation_state(user["id"], chat_id)
+    storage = "redis_cache"
+    if history is None:
+        history = require_supabase_operation(
+            supabase_get_chat_history(chat_id=chat_id, user_id=user["id"])
+        )
+        storage = "supabase"
     if history["chat"] is None:
         raise HTTPException(status_code=404, detail="Chat not found.")
+    redis_set_conversation_state(
+        user["id"],
+        chat_id,
+        {"chat": history["chat"], "messages": history.get("messages") or []},
+    )
     return {
         "ok": True,
         "chat_id": chat_id,
         "messages": history["messages"],
-        "storage": "supabase",
+        "storage": storage,
     }
 
 
@@ -7881,12 +8069,31 @@ def run_benchmark_from_runner(
     payload: BenchmarkRunnerRequest,
     user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
-    benchmark_payload = build_simulated_benchmark_payload(payload)
-    result = persist_benchmark_run(benchmark_payload, user["id"])
+    lock_resource = f"benchmark:{user['id']}:{payload.model}"
+    with redis_distributed_lock(
+        lock_resource,
+        ttl_seconds=120,
+        wait_seconds=0.25,
+    ) as lock:
+        if not lock["acquired"]:
+            raise HTTPException(
+                status_code=409,
+                detail="A benchmark for this model is already running.",
+            )
+        benchmark_payload = build_simulated_benchmark_payload(payload)
+        result = persist_benchmark_run(benchmark_payload, user["id"])
+    queue_result = redis_enqueue_background_job(
+        "benchmark.dashboard.refresh",
+        {
+            "user_id": user["id"],
+            "run_id": result["run"]["run_id"],
+        },
+    )
     return {
         "ok": True,
         "message": "Benchmark run completed.",
         **result,
+        "background_job_queued": bool(queue_result["ok"]),
         "overview": user_benchmark_overview(user["id"]),
         "trends": user_benchmark_trends(user["id"]),
     }
