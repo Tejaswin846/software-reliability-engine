@@ -11,6 +11,11 @@ from typing import Any, Dict, List, Optional
 
 from qdrant_client import QdrantClient, models
 
+try:
+    from .sentry_monitoring import capture_operational_error, redact_text
+except ImportError:
+    from sentry_monitoring import capture_operational_error, redact_text
+
 
 LOGGER = logging.getLogger("software.memory")
 
@@ -113,7 +118,17 @@ def _ensure_collection() -> bool:
             )
         except Exception as error:
             if "already exists" not in str(error).lower():
-                LOGGER.warning("Could not create Qdrant user_id index: %s", error)
+                LOGGER.warning(
+                    "Could not create Qdrant user_id index: %s",
+                    redact_text(str(error)),
+                )
+                capture_operational_error(
+                    error,
+                    category="qdrant_failure",
+                    level="warning",
+                    provider="qdrant",
+                    operation="create_user_id_index",
+                )
 
         try:
             client.create_payload_index(
@@ -124,12 +139,31 @@ def _ensure_collection() -> bool:
             )
         except Exception as error:
             if "already exists" not in str(error).lower():
-                LOGGER.warning("Could not create Qdrant created_at index: %s", error)
+                LOGGER.warning(
+                    "Could not create Qdrant created_at index: %s",
+                    redact_text(str(error)),
+                )
+                capture_operational_error(
+                    error,
+                    category="qdrant_failure",
+                    level="warning",
+                    provider="qdrant",
+                    operation="create_created_at_index",
+                )
 
         _collection_ready = True
         return True
-    except Exception:
-        LOGGER.exception("Qdrant collection initialization failed.")
+    except Exception as error:
+        LOGGER.error(
+            "Qdrant collection initialization failed: %s",
+            redact_text(str(error)),
+        )
+        capture_operational_error(
+            error,
+            category="qdrant_failure",
+            provider="qdrant",
+            operation="initialize_collection",
+        )
         return False
 
 
@@ -188,11 +222,22 @@ def save_memory(user_id: str, text: str) -> Dict[str, Any]:
             "created_at": created_at,
         }
     except Exception as error:
-        LOGGER.exception("Could not save Qdrant memory for user %s.", clean_user_id)
+        LOGGER.error(
+            "Could not save Qdrant memory for user %s: %s",
+            clean_user_id,
+            redact_text(str(error)),
+        )
+        capture_operational_error(
+            error,
+            category="qdrant_failure",
+            user_id=clean_user_id,
+            provider="qdrant",
+            operation="save_memory",
+        )
         return {
             "ok": False,
             "stored": False,
-            "error": str(error),
+            "error": redact_text(str(error)),
         }
 
 
@@ -227,10 +272,18 @@ def search_memory(
             clean_user_id,
         )
         return memories
-    except Exception:
-        LOGGER.exception(
-            "Could not search Qdrant memories for user %s.",
+    except Exception as error:
+        LOGGER.error(
+            "Could not search Qdrant memories for user %s: %s",
             clean_user_id,
+            redact_text(str(error)),
+        )
+        capture_operational_error(
+            error,
+            category="qdrant_failure",
+            user_id=clean_user_id,
+            provider="qdrant",
+            operation="search_memory",
         )
         return []
 
@@ -259,10 +312,18 @@ def get_recent_memories(
             reverse=True,
         )
         return memories[: max(1, min(limit, 100))]
-    except Exception:
-        LOGGER.exception(
-            "Could not load recent Qdrant memories for user %s.",
+    except Exception as error:
+        LOGGER.error(
+            "Could not load recent Qdrant memories for user %s: %s",
             clean_user_id,
+            redact_text(str(error)),
+        )
+        capture_operational_error(
+            error,
+            category="qdrant_failure",
+            user_id=clean_user_id,
+            provider="qdrant",
+            operation="get_recent_memories",
         )
         return []
 

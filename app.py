@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
+import time
 import uuid
 import hashlib
 import hmac
@@ -20,6 +22,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Res
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
+import sentry_sdk
 
 try:
     from .reliability_scoring import build_metrics_from_summary
@@ -83,6 +86,40 @@ except ImportError:
         search_memory as qdrant_search_memory,
     )
 
+try:
+    from .sentry_monitoring import (
+        capture_operational_error,
+        initialize_sentry,
+        sentry_health_check,
+        set_monitoring_context,
+    )
+except ImportError:
+    from sentry_monitoring import (
+        capture_operational_error,
+        initialize_sentry,
+        sentry_health_check,
+        set_monitoring_context,
+    )
+
+try:
+    from .composio_service import (
+        composio_health_check,
+        execute_tool as execute_composio_tool,
+        get_user_tool_context as get_composio_tool_context,
+        initialize_composio,
+        refresh_tools as refresh_composio_tools,
+        tool_descriptors as composio_tool_descriptors,
+    )
+except ImportError:
+    from composio_service import (
+        composio_health_check,
+        execute_tool as execute_composio_tool,
+        get_user_tool_context as get_composio_tool_context,
+        initialize_composio,
+        refresh_tools as refresh_composio_tools,
+        tool_descriptors as composio_tool_descriptors,
+    )
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -131,6 +168,7 @@ REDIRECT_WWW = os.getenv("SOFTWARE_REDIRECT_WWW", "true").lower() == "true"
 DB_PATH = Path(os.getenv("SOFTWARE_API_DB_PATH", DATA_DIR / "software_reliability.db")).expanduser()
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
 STARTUP_CHECKS: Dict[str, Any] = {}
+LOGGER = logging.getLogger("software.app")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRO_PRICE_ID = os.getenv("STRIPE_PRO_PRICE_ID", "")
@@ -1605,6 +1643,14 @@ class SDKRecoveryRequest(BaseModel):
     auto_apply: bool = True
 
 
+class ComposioToolExecuteRequest(BaseModel):
+    workflow_id: str = Field(..., min_length=1, max_length=180)
+    tool_slug: str = Field(..., min_length=1, max_length=240)
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    account: Optional[str] = Field(None, max_length=240)
+    agent_name: Optional[str] = Field(None, max_length=160)
+
+
 class SDKTestWorkflowRequest(BaseModel):
     project_name: Optional[str] = Field(None, max_length=160)
     workflow_name: str = Field("install-page-test", min_length=1, max_length=220)
@@ -1871,6 +1917,7 @@ def current_user(
     user = authenticated_user_from_token(token)
     with connect() as db:
         record_usage(db, user["id"], "api_request", metadata={"source": "user_api"})
+    set_monitoring_context(user_id=user["id"])
     return user
 
 
@@ -2398,6 +2445,10 @@ def require_sdk_api_key(
         )
         context = row_to_dict(row)
         context["last_used_at"] = used_at
+    set_monitoring_context(
+        user_id=context["user_id"],
+        project_id=context["project_id"],
+    )
     return context
 
 
@@ -5107,6 +5158,8 @@ def run_startup_checks() -> Dict[str, Any]:
         "api_database": api_database_check(),
         "reliability_database": reliability_database_check(),
         "dashboard_assets": dashboard_asset_check(),
+        "monitoring": sentry_health_check(),
+        "composio": composio_health_check(),
     }
     checks["ok"] = all(
         check.get("ok") is True
@@ -5137,6 +5190,26 @@ if ALLOWED_ORIGINS:
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
+
+@app.middleware("http")
+async def sentry_request_context(request: Request, call_next):
+    request_id = (request.headers.get("x-request-id") or uuid.uuid4().hex)[:128]
+    with sentry_sdk.isolation_scope() as scope:
+        scope.set_tag("request_id", request_id)
+        scope.set_tag("deployment_version", sentry_health_check()["deployment_version"])
+        scope.set_context(
+            "request_metadata",
+            {
+                "request_id": request_id,
+                "method": request.method,
+                "path": request.url.path,
+            },
+        )
+        request.state.request_id = request_id
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
 
 @app.middleware("http")
@@ -5181,6 +5254,10 @@ async def inject_clarity_loader(request: Request, call_next):
 
 @app.on_event("startup")
 def startup() -> None:
+    monitoring = initialize_sentry()
+    if monitoring["configured"] and not monitoring["initialized"]:
+        LOGGER.error("Sentry is configured but failed to initialize: %s", monitoring["error"])
+    initialize_composio()
     run_startup_checks()
 
 
@@ -5189,6 +5266,8 @@ def health_check(response: Response) -> Dict[str, Any]:
     checks = run_startup_checks()
     supabase = supabase_health_check()
     memory = memory_health_check()
+    monitoring = sentry_health_check()
+    composio_status = composio_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -5203,6 +5282,8 @@ def health_check(response: Response) -> Dict[str, Any]:
             "dashboard_assets": checks["dashboard_assets"]["ok"],
             "supabase": supabase,
             "memory": memory,
+            "monitoring": monitoring,
+            "composio": composio_status,
         },
     }
 
@@ -5222,6 +5303,8 @@ def status(response: Response) -> Dict[str, Any]:
     checks = run_startup_checks()
     supabase = supabase_health_check()
     memory = memory_health_check()
+    monitoring = sentry_health_check()
+    composio_status = composio_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -5235,6 +5318,8 @@ def status(response: Response) -> Dict[str, Any]:
         "domain": domain_config_payload(),
         "supabase": supabase,
         "memory": memory,
+        "monitoring": monitoring,
+        "composio": composio_status,
         "startup_checks": checks,
     }
 
@@ -5705,6 +5790,34 @@ def api_supabase_health() -> Dict[str, Any]:
 def api_memory_health() -> Dict[str, Any]:
     health = memory_health_check()
     return {"ok": health["ok"], "memory": health}
+
+
+@app.get("/api/composio/health")
+def api_composio_health() -> Dict[str, Any]:
+    health = composio_health_check()
+    return {"ok": health["ok"], "composio": health}
+
+
+@app.get("/api/composio/tools")
+def api_composio_tools(
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "composio": get_composio_tool_context(user["id"]),
+    }
+
+
+@app.post("/api/composio/tools/refresh")
+def api_refresh_composio_tools(
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    tools = refresh_composio_tools(user["id"])
+    return {
+        "ok": True,
+        "tools": composio_tool_descriptors(tools),
+        "composio": get_composio_tool_context(user["id"]),
+    }
 
 
 @app.get("/api/memory/recent")
@@ -6952,6 +7065,13 @@ def sdk_start_workflow(
 ) -> Dict[str, Any]:
     init_db()
     workflow_id = payload.workflow_id or f"wf_{uuid.uuid4().hex}"
+    set_monitoring_context(
+        user_id=api_key_context["user_id"],
+        workflow_id=workflow_id,
+        agent_name=str(payload.metadata.get("agent_name") or "") or None,
+        project_id=api_key_context["project_id"],
+    )
+    composio_context = get_composio_tool_context(api_key_context["user_id"])
     started_at = now_iso()
     with connect() as db:
         existing_workflow = db.execute(
@@ -6997,7 +7117,99 @@ def sdk_start_workflow(
                 api_key_id=api_key_context["api_key_id"],
                 metadata={"workflow_id": workflow_id, "workflow_name": payload.workflow_name},
             )
-    return {"ok": True, "workflow_id": workflow_id, "started_at": started_at}
+    return {
+        "ok": True,
+        "workflow_id": workflow_id,
+        "started_at": started_at,
+        "agent_tools": composio_context["tools"],
+        "composio": {
+            key: value
+            for key, value in composio_context.items()
+            if key != "tools"
+        },
+    }
+
+
+@app.get("/api/sdk/tools")
+def sdk_get_composio_tools(
+    api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
+) -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "composio": get_composio_tool_context(api_key_context["user_id"]),
+    }
+
+
+@app.post("/api/sdk/tools/refresh")
+def sdk_refresh_composio_tools(
+    api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
+) -> Dict[str, Any]:
+    tools = refresh_composio_tools(api_key_context["user_id"])
+    return {
+        "ok": True,
+        "tools": composio_tool_descriptors(tools),
+        "composio": get_composio_tool_context(api_key_context["user_id"]),
+    }
+
+
+@app.post("/api/sdk/tools/execute")
+def sdk_execute_composio_tool(
+    payload: ComposioToolExecuteRequest,
+    api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
+) -> Dict[str, Any]:
+    init_db()
+    started = time.perf_counter()
+    with connect() as db:
+        sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
+
+    result = execute_composio_tool(
+        api_key_context["user_id"],
+        payload.tool_slug,
+        payload.arguments,
+        account=payload.account,
+        workflow_id=payload.workflow_id,
+        agent_name=payload.agent_name,
+    )
+    latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+    with connect() as db:
+        event_id = sdk_insert_event(
+            db,
+            payload.workflow_id,
+            "tool_call",
+            stage_name="composio",
+            tool_name=payload.tool_slug.upper(),
+            name=payload.tool_slug.upper(),
+            success=bool(result["ok"]),
+            latency_ms=latency_ms,
+            error_type=None if result["ok"] else "composio_tool_failure",
+            error_message=result.get("error"),
+            payload={
+                "provider": "composio",
+                "log_id": result.get("log_id"),
+                "agent_name": payload.agent_name,
+            },
+        )
+        record_usage(
+            db,
+            api_key_context["user_id"],
+            "tool_call",
+            project_id=api_key_context["project_id"],
+            api_key_id=api_key_context["api_key_id"],
+            metadata={
+                "workflow_id": payload.workflow_id,
+                "tool_name": payload.tool_slug.upper(),
+                "provider": "composio",
+                "success": bool(result["ok"]),
+            },
+        )
+    return {
+        "ok": bool(result["ok"]),
+        "event_id": event_id,
+        "workflow_id": payload.workflow_id,
+        "tool_slug": payload.tool_slug.upper(),
+        "latency_ms": latency_ms,
+        "result": result,
+    }
 
 
 @app.post("/api/sdk/workflows/stage")
@@ -7005,6 +7217,12 @@ def sdk_track_stage(
     payload: SDKStageEvent,
     api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
 ) -> Dict[str, Any]:
+    set_monitoring_context(
+        user_id=api_key_context["user_id"],
+        workflow_id=payload.workflow_id,
+        agent_name=str(payload.metadata.get("agent_name") or "") or None,
+        stage_name=payload.stage_name,
+    )
     init_db()
     with connect() as db:
         sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
@@ -7027,6 +7245,14 @@ def sdk_log_model_call(
     payload: SDKModelCall,
     api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
 ) -> Dict[str, Any]:
+    agent_name = str(payload.metadata.get("agent_name") or payload.stage_name or "") or None
+    set_monitoring_context(
+        user_id=api_key_context["user_id"],
+        workflow_id=payload.workflow_id,
+        agent_name=agent_name,
+        model=payload.model,
+        stage_name=payload.stage_name,
+    )
     init_db()
     with connect() as db:
         sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
@@ -7050,6 +7276,25 @@ def sdk_log_model_call(
             api_key_id=api_key_context["api_key_id"],
             metadata={"workflow_id": payload.workflow_id, "model": payload.model},
         )
+    if not payload.success:
+        normalized_model = payload.model.lower()
+        provider = (
+            "openai"
+            if "openai" in normalized_model or normalized_model.startswith("gpt")
+            else "anthropic"
+            if "anthropic" in normalized_model or "claude" in normalized_model
+            else "model_provider"
+        )
+        capture_operational_error(
+            f"Model call failed: {payload.model}",
+            category=f"{provider}_api_error",
+            user_id=api_key_context["user_id"],
+            workflow_id=payload.workflow_id,
+            agent_name=agent_name,
+            provider=provider,
+            model=payload.model,
+            stage_name=payload.stage_name,
+        )
     return {"ok": True, "event_id": event_id}
 
 
@@ -7058,6 +7303,14 @@ def sdk_log_tool_call(
     payload: SDKToolCall,
     api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
 ) -> Dict[str, Any]:
+    agent_name = str(payload.metadata.get("agent_name") or payload.stage_name or "") or None
+    set_monitoring_context(
+        user_id=api_key_context["user_id"],
+        workflow_id=payload.workflow_id,
+        agent_name=agent_name,
+        tool_name=payload.tool_name,
+        stage_name=payload.stage_name,
+    )
     init_db()
     with connect() as db:
         sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
@@ -7081,6 +7334,16 @@ def sdk_log_tool_call(
             api_key_id=api_key_context["api_key_id"],
             metadata={"workflow_id": payload.workflow_id, "tool_name": payload.tool_name},
         )
+    if not payload.success:
+        capture_operational_error(
+            f"External tool call failed: {payload.tool_name}",
+            category="external_http_or_tool_failure",
+            user_id=api_key_context["user_id"],
+            workflow_id=payload.workflow_id,
+            agent_name=agent_name,
+            tool_name=payload.tool_name,
+            stage_name=payload.stage_name,
+        )
     return {"ok": True, "event_id": event_id}
 
 
@@ -7089,6 +7352,14 @@ def sdk_log_error(
     payload: SDKErrorEvent,
     api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
 ) -> Dict[str, Any]:
+    agent_name = str(payload.metadata.get("agent_name") or payload.stage_name or "") or None
+    set_monitoring_context(
+        user_id=api_key_context["user_id"],
+        workflow_id=payload.workflow_id,
+        agent_name=agent_name,
+        failure_type=payload.error_type,
+        stage_name=payload.stage_name,
+    )
     init_db()
     with connect() as db:
         workflow = sdk_fetch_owned_workflow(db, payload.workflow_id, api_key_context)
@@ -7124,6 +7395,16 @@ def sdk_log_error(
                     "fatal": payload.fatal,
                 },
             )
+    capture_operational_error(
+        payload.error_message,
+        category="agent_execution_error",
+        level="error" if payload.fatal else "warning",
+        user_id=api_key_context["user_id"],
+        workflow_id=payload.workflow_id,
+        agent_name=agent_name,
+        failure_type=payload.error_type,
+        stage_name=payload.stage_name,
+    )
     return {"ok": True, "event_id": event_id}
 
 

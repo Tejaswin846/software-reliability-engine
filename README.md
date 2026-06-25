@@ -29,6 +29,88 @@ Software includes:
 - reliability dashboard
 - developer documentation
 - runnable examples
+- production error, log, and performance monitoring with Sentry
+
+## Sentry Monitoring
+
+Install project dependencies and configure Sentry entirely through environment
+variables:
+
+```bash
+pip install -r requirements.txt
+```
+
+```text
+SENTRY_DSN=https://public-key@o0.ingest.sentry.io/0
+SENTRY_TRACES_SAMPLE_RATE=0.2
+SENTRY_ENABLE_LOGS=true
+SENTRY_ENVIRONMENT=production
+SENTRY_RELEASE=software@0.2.0
+```
+
+`SENTRY_DSN` is optional locally. When it is absent, monitoring is disabled
+without preventing the application from starting. In production, Software
+captures unhandled FastAPI and async-task exceptions, failed SDK agent/model/tool
+events, Qdrant failures, and traced outgoing HTTPX calls. OpenAI and Claude
+failures reported through the SDK model-call or error endpoints are categorized
+without recording prompts, request bodies, authorization headers, cookies, API
+keys, or passwords.
+
+The `/health` and `/status` responses include a `monitoring` object showing
+whether Sentry is configured and initialized. `SENTRY_TRACES_SAMPLE_RATE`
+defaults to `0.2` and accepts values from `0.0` to `1.0`.
+
+## Composio Tools
+
+Set the Composio API key in the environment:
+
+```text
+COMPOSIO_API_KEY=replace-with-your-composio-api-key
+```
+
+Software creates one cached Composio session per authenticated user using
+`OpenAIAgentsProvider`. Existing orchestration is preserved: Composio tools are
+added to the current workflow instead of creating a separate agent. Sessions are
+restricted to Gmail, Google Calendar, Google Drive, GitHub, Slack, and Notion,
+and connection-management tools let a user connect an application when needed.
+
+Server-side agent orchestration can attach native OpenAI Agents tools without
+replacing existing tools:
+
+```python
+from composio_service import attach_user_tools
+
+agent_tools = attach_user_tools(user_id, existing_tools)
+```
+
+SDK workflows receive available tool descriptors when the workflow starts:
+
+```python
+with monitor.track_workflow("connected-agent") as workflow:
+    print(workflow.available_tools)
+    result = workflow.execute_tool(
+        "GITHUB_LIST_REPOSITORIES_FOR_THE_AUTHENTICATED_USER",
+        {},
+        agent_name="research-agent",
+    )
+```
+
+Composio routes:
+
+```text
+GET  /api/composio/health
+GET  /api/composio/tools
+POST /api/composio/tools/refresh
+GET  /api/sdk/tools
+POST /api/sdk/tools/refresh
+POST /api/sdk/tools/execute
+```
+
+Tool arguments are not written to reliability logs or Sentry. Failed discovery
+and execution are logged, captured by Sentry, and recorded as workflow tool
+events without exposing `COMPOSIO_API_KEY`. Tool execution is never placed in
+the SDK retry buffer because repeating a non-idempotent action could send a
+duplicate email, message, or calendar event.
 
 ## Why Software Exists
 

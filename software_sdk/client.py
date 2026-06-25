@@ -42,7 +42,13 @@ class SoftwareClient:
             raise SoftwareClientError(f"Software API rejected request: {parsed}")
         return parsed
 
-    def post(self, path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def post(
+        self,
+        path: str,
+        payload: Dict[str, Any],
+        *,
+        accept_failure: bool = False,
+    ) -> Dict[str, Any]:
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
             f"{self.api_url}{path}",
@@ -67,7 +73,7 @@ class SoftwareClient:
             parsed = json.loads(raw)
         except json.JSONDecodeError as error:
             raise SoftwareClientError(f"Software API returned invalid JSON: {raw[:200]}") from error
-        if not parsed.get("ok", False):
+        if not parsed.get("ok", False) and not accept_failure:
             raise SoftwareClientError(f"Software API rejected request: {parsed}")
         return parsed
 
@@ -85,6 +91,19 @@ class SoftwareClient:
 
     def log_error(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.post("/api/sdk/workflows/error", payload)
+
+    def get_tools(self) -> Dict[str, Any]:
+        return self.get("/api/sdk/tools")
+
+    def refresh_tools(self) -> Dict[str, Any]:
+        return self.post("/api/sdk/tools/refresh", {})
+
+    def execute_tool(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.post(
+            "/api/sdk/tools/execute",
+            payload,
+            accept_failure=True,
+        )
 
     def complete_workflow(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return self.post("/api/sdk/workflows/complete", payload)

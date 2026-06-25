@@ -8,3 +8,6 @@ pydantic==2.13.4
 stripe>=10,<15
 supabase==2.31.0
 qdrant-client==1.18.0
+sentry-sdk[fastapi]==2.63.0
+composio==0.16.0
+composio-openai-agents==0.16.0

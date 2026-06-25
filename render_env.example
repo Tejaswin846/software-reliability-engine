@@ -50,3 +50,14 @@ CLARITY_PROJECT_ID=xc0zbrjy3z
 # Qdrant Cloud long-term chat memory.
 QDRANT_URL=https://your-cluster.region.cloud.qdrant.io
 QDRANT_API_KEY=replace-with-your-qdrant-api-key
+
+# Sentry production monitoring. Keep the DSN in Render's secret environment settings.
+SENTRY_DSN=https://public-key@o0.ingest.sentry.io/0
+SENTRY_TRACES_SAMPLE_RATE=0.2
+SENTRY_ENABLE_LOGS=true
+SENTRY_ENVIRONMENT=production
+# Optional. Render's RENDER_GIT_COMMIT is used automatically when this is empty.
+SENTRY_RELEASE=
+
+# Composio connected application tools for authenticated users.
+COMPOSIO_API_KEY=replace-with-your-composio-api-key

@@ -92,6 +92,26 @@ class ReliabilityMonitor:
             },
         )
 
+    def get_tools(self, refresh: bool = False) -> Dict[str, Any]:
+        return self.client.refresh_tools() if refresh else self.client.get_tools()
+
+    def execute_tool(
+        self,
+        workflow_id: str,
+        tool_slug: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        return self._send(
+            "execute_tool",
+            {
+                "workflow_id": workflow_id,
+                "tool_slug": tool_slug,
+                "arguments": arguments or {},
+                **kwargs,
+            },
+        )
+
     def predict_failure(self, workflow_id: str) -> Dict[str, Any]:
         return self._send("predict_failure", {"workflow_id": workflow_id})
 
@@ -137,6 +157,9 @@ class ReliabilityMonitor:
                     self.client.predict_failure(item.payload["workflow_id"])
                 elif item.method_name == "recover_workflow":
                     self.client.recover_workflow(item.payload)
+                elif item.method_name == "execute_tool":
+                    failed += 1
+                    continue
                 else:
                     getattr(self.client, item.method_name)(item.payload)
                 sent += 1
@@ -157,8 +180,16 @@ class ReliabilityMonitor:
                 return self.client.predict_failure(payload["workflow_id"])
             if method_name == "recover_workflow":
                 return self.client.recover_workflow(payload)
+            if method_name == "execute_tool":
+                return self.client.execute_tool(payload)
             return getattr(self.client, method_name)(payload)
         except SoftwareClientError as error:
+            if method_name == "execute_tool":
+                return {
+                    "ok": False,
+                    "buffered": False,
+                    "error": str(error),
+                }
             self.buffer.append(BufferedRequest(method_name, payload, str(error)))
             if self.raise_on_error:
                 raise
@@ -178,6 +209,7 @@ class WorkflowMonitor:
     current_stage: Optional[str] = None
     started_ms: int = field(default_factory=_now_ms)
     completed: bool = False
+    available_tools: List[Dict[str, Any]] = field(default_factory=list)
 
     def __enter__(self) -> "WorkflowMonitor":
         response = self.monitor._send(
@@ -191,6 +223,7 @@ class WorkflowMonitor:
         )
         if response.get("workflow_id"):
             self.workflow_id = response["workflow_id"]
+        self.available_tools = list(response.get("agent_tools") or [])
         return self
 
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool:
@@ -303,6 +336,25 @@ class WorkflowMonitor:
 
     def recover(self, auto_apply: bool = True) -> Dict[str, Any]:
         return self.monitor.recover_workflow(self.workflow_id, auto_apply=auto_apply)
+
+    def execute_tool(
+        self,
+        tool_slug: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        account: Optional[str] = None,
+        agent_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {}
+        if account is not None:
+            payload["account"] = account
+        if agent_name is not None:
+            payload["agent_name"] = agent_name
+        return self.monitor.execute_tool(
+            self.workflow_id,
+            tool_slug,
+            arguments,
+            **payload,
+        )
 
     def complete(
         self,

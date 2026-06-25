@@ -30,6 +30,16 @@ services:
         sync: false
       - key: QDRANT_API_KEY
         sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: SENTRY_TRACES_SAMPLE_RATE
+        value: "0.2"
+      - key: SENTRY_ENABLE_LOGS
+        value: "true"
+      - key: SENTRY_ENVIRONMENT
+        value: production
+      - key: COMPOSIO_API_KEY
+        sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET

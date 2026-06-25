@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -12,11 +13,17 @@ except ImportError:  # pragma: no cover - exercised when optional dependency is 
     Client = Any  # type: ignore[misc,assignment]
     create_client = None
 
+try:
+    from .sentry_monitoring import capture_operational_error, redact_text
+except ImportError:
+    from sentry_monitoring import capture_operational_error, redact_text
+
 
 _CLIENT: Optional[Client] = None
 _CLIENT_CONFIG: Optional[tuple[str, str]] = None
 _CLIENT_LOCK = threading.Lock()
 _LAST_ERROR: Optional[str] = None
+LOGGER = logging.getLogger("software.supabase")
 
 
 def _now_iso() -> str:
@@ -67,12 +74,13 @@ def _auth_session_payload(session: Any) -> Optional[Dict[str, Any]]:
 
 def _failure(operation: str, error: str, *, available: bool = False) -> Dict[str, Any]:
     global _LAST_ERROR
-    _LAST_ERROR = error
+    clean_error = redact_text(error)
+    _LAST_ERROR = clean_error
     return {
         "ok": False,
         "available": available,
         "operation": operation,
-        "error": error,
+        "error": clean_error,
         "data": None,
     }
 
@@ -87,6 +95,27 @@ def _success(operation: str, data: Any) -> Dict[str, Any]:
         "error": None,
         "data": data,
     }
+
+
+def _report_provider_failure(
+    operation: str,
+    error: BaseException,
+    *,
+    level: str = "error",
+) -> None:
+    LOGGER.log(
+        logging.ERROR if level == "error" else logging.WARNING,
+        "Supabase operation %s failed: %s",
+        operation,
+        redact_text(str(error)),
+    )
+    capture_operational_error(
+        error,
+        category="external_http_or_provider_failure",
+        level=level,
+        provider="supabase",
+        operation=operation,
+    )
 
 
 def get_supabase_client() -> Optional[Client]:
@@ -109,7 +138,8 @@ def get_supabase_client() -> Optional[Client]:
         except Exception as error:
             _CLIENT = None
             _CLIENT_CONFIG = None
-            _LAST_ERROR = f"Could not create Supabase client: {error}"
+            _LAST_ERROR = redact_text(f"Could not create Supabase client: {error}")
+            _report_provider_failure("create_client", error)
     return _CLIENT
 
 
@@ -135,12 +165,13 @@ def supabase_health_check() -> Dict[str, Any]:
     try:
         client.table("chats").select("id").limit(1).execute()
     except Exception as error:
+        _report_provider_failure("health_check", error, level="warning")
         return {
             "ok": False,
             "available": False,
             "configured": True,
             "url": url,
-            "error": f"Supabase health check failed: {error}",
+            "error": redact_text(f"Supabase health check failed: {error}"),
         }
     return {
         "ok": True,
@@ -173,6 +204,7 @@ def auth_sign_up(
             },
         )
     except Exception as error:
+        _report_provider_failure("auth_sign_up", error, level="warning")
         return _failure("auth_sign_up", f"Could not create account: {error}", available=True)
 
 
@@ -215,6 +247,7 @@ def auth_request_password_reset(*, email: str, redirect_to: str) -> Dict[str, An
         client.auth.reset_password_email(email, {"redirect_to": redirect_to})
         return _success("auth_request_password_reset", {"email": email})
     except Exception as error:
+        _report_provider_failure("auth_request_password_reset", error, level="warning")
         return _failure(
             "auth_request_password_reset",
             f"Could not send password reset email: {error}",
@@ -236,6 +269,7 @@ def auth_update_password(
         response = client.auth.update_user({"password": password})
         return _success("auth_update_password", _auth_user_payload(response.user))
     except Exception as error:
+        _report_provider_failure("auth_update_password", error, level="warning")
         return _failure(
             "auth_update_password",
             f"Could not update password: {error}",
@@ -269,6 +303,7 @@ def create_chat(
         data = response.data[0] if response.data else payload
         return _success("create_chat", data)
     except Exception as error:
+        _report_provider_failure("create_chat", error)
         return _failure("create_chat", f"Could not create chat: {error}", available=True)
 
 
@@ -301,6 +336,7 @@ def save_message(
         ).eq("user_id", user_id).execute()
         return _success("save_message", data)
     except Exception as error:
+        _report_provider_failure("save_message", error)
         return _failure("save_message", f"Could not save message: {error}", available=True)
 
 
@@ -333,6 +369,7 @@ def get_chat_history(*, chat_id: str, user_id: str) -> Dict[str, Any]:
             {"chat": chat, "messages": messages_response.data or []},
         )
     except Exception as error:
+        _report_provider_failure("get_chat_history", error)
         return _failure(
             "get_chat_history",
             f"Could not load chat history: {error}",
@@ -378,6 +415,7 @@ def save_benchmark_run(run: Dict[str, Any]) -> Dict[str, Any]:
         data = response.data[0] if response.data else payload
         return _success("save_benchmark_run", data)
     except Exception as error:
+        _report_provider_failure("save_benchmark_run", error)
         return _failure(
             "save_benchmark_run",
             f"Could not save benchmark run: {error}",
