@@ -26,6 +26,7 @@ SOFTWARE_REDIS_KEY_PREFIX=software
 SOFTWARE_AI_CACHE_TTL_SECONDS=3600
 SOFTWARE_CONVERSATION_STATE_TTL_SECONDS=21600
 SOFTWARE_SESSION_CACHE_TTL_SECONDS=3600
+SOFTWARE_AI_EXECUTION_STATE_TTL_SECONDS=1800
 SOFTWARE_REDIS_QUEUE_MAX_LENGTH=10000
 SOFTWARE_REDIS_RETRIES=2
 SOFTWARE_REDIS_RETRY_INTERVAL_SECONDS=0.25
@@ -64,6 +65,10 @@ Chat snapshots use short TTLs and are refreshed after message writes. Supabase
 remains the durable source of truth. Authenticated user lookups are cached by a
 SHA-256 fingerprint of the session token; raw tokens are never used as Redis
 keys.
+
+Reliability-first AI execution plans use a separate short TTL. The durable
+execution audit stays in SQLite, so losing Redis state never authorizes or
+executes an action.
 
 ## Queues
 

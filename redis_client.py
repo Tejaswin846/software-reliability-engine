@@ -27,6 +27,9 @@ CONVERSATION_TTL_SECONDS = int(
     os.getenv("SOFTWARE_CONVERSATION_STATE_TTL_SECONDS", "21600")
 )
 SESSION_TTL_SECONDS = int(os.getenv("SOFTWARE_SESSION_CACHE_TTL_SECONDS", "3600"))
+EXECUTION_STATE_TTL_SECONDS = int(
+    os.getenv("SOFTWARE_AI_EXECUTION_STATE_TTL_SECONDS", "1800")
+)
 QUEUE_MAX_LENGTH = int(os.getenv("SOFTWARE_REDIS_QUEUE_MAX_LENGTH", "10000"))
 SDK_RETRIES = max(0, int(os.getenv("SOFTWARE_REDIS_RETRIES", "2")))
 SDK_RETRY_INTERVAL = max(
@@ -396,6 +399,56 @@ def delete_session_cache(session_id: str) -> bool:
         _run(
             "delete session cache",
             lambda client: client.delete(_key("session", session_id)),
+            default=False,
+        )
+    )
+
+
+def set_execution_state(
+    user_id: str,
+    request_id: str,
+    value: Dict[str, Any],
+    *,
+    ttl_seconds: int = EXECUTION_STATE_TTL_SECONDS,
+) -> bool:
+    payload = {"user_id": user_id, "request_id": request_id, **value}
+    return bool(
+        _run(
+            "set AI execution state",
+            lambda client: client.set(
+                _key("ai-execution", user_id, request_id),
+                _json_dumps(payload),
+                ex=max(1, ttl_seconds),
+            ),
+            default=False,
+        )
+    )
+
+
+def get_execution_state(
+    user_id: str,
+    request_id: str,
+) -> Optional[Dict[str, Any]]:
+    value = _run(
+        "get AI execution state",
+        lambda client: client.get(_key("ai-execution", user_id, request_id)),
+        default=None,
+    )
+    parsed = _json_loads(value)
+    if (
+        isinstance(parsed, dict)
+        and str(parsed.get("user_id")) == str(user_id)
+        and str(parsed.get("request_id")) == str(request_id)
+    ):
+        return parsed
+    return None
+
+
+def delete_execution_state(user_id: str, request_id: str) -> bool:
+    return bool(
+        _run(
+            "delete AI execution state",
+            lambda client: client.delete(_key("ai-execution", user_id, request_id)),
             default=False,
         )
     )

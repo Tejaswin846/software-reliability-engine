@@ -90,15 +90,19 @@ try:
     from .sentry_monitoring import (
         capture_operational_error,
         initialize_sentry,
+        redact_text,
         sentry_health_check,
         set_monitoring_context,
+        scrub_sensitive_data,
     )
 except ImportError:
     from sentry_monitoring import (
         capture_operational_error,
         initialize_sentry,
+        redact_text,
         sentry_health_check,
         set_monitoring_context,
+        scrub_sensitive_data,
     )
 
 try:
@@ -107,6 +111,7 @@ try:
         execute_tool as execute_composio_tool,
         get_user_tool_context as get_composio_tool_context,
         initialize_composio,
+        list_integrations as list_composio_integrations,
         refresh_tools as refresh_composio_tools,
         tool_descriptors as composio_tool_descriptors,
     )
@@ -116,6 +121,7 @@ except ImportError:
         execute_tool as execute_composio_tool,
         get_user_tool_context as get_composio_tool_context,
         initialize_composio,
+        list_integrations as list_composio_integrations,
         refresh_tools as refresh_composio_tools,
         tool_descriptors as composio_tool_descriptors,
     )
@@ -132,11 +138,13 @@ try:
         delete_session_cache as redis_delete_session_cache,
         distributed_lock as redis_distributed_lock,
         enqueue_background_job as redis_enqueue_background_job,
+        get_execution_state as redis_get_execution_state,
         get_cached_ai_response as redis_get_cached_ai_response,
         get_conversation_state as redis_get_conversation_state,
         get_session_cache as redis_get_session_cache,
         initialize_redis,
         redis_health_check,
+        set_execution_state as redis_set_execution_state,
         set_conversation_state as redis_set_conversation_state,
         set_session_cache as redis_set_session_cache,
     )
@@ -147,14 +155,21 @@ except ImportError:
         delete_session_cache as redis_delete_session_cache,
         distributed_lock as redis_distributed_lock,
         enqueue_background_job as redis_enqueue_background_job,
+        get_execution_state as redis_get_execution_state,
         get_cached_ai_response as redis_get_cached_ai_response,
         get_conversation_state as redis_get_conversation_state,
         get_session_cache as redis_get_session_cache,
         initialize_redis,
         redis_health_check,
+        set_execution_state as redis_set_execution_state,
         set_conversation_state as redis_set_conversation_state,
         set_session_cache as redis_set_session_cache,
     )
+
+try:
+    from .ai_execution import AIExecutionService, create_ai_execution_router
+except ImportError:
+    from ai_execution import AIExecutionService, create_ai_execution_router
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -5125,6 +5140,8 @@ def api_database_check() -> Dict[str, Any]:
                     "ai_decisions",
                     "decision_verifications",
                     "human_approvals",
+                    "ai_execution_requests",
+                    "ai_execution_audit_events",
                     "benchmark_runs",
                     "workflow_results",
                     "model_results",
@@ -5207,6 +5224,7 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "integrations/ui/apps.css": BASE_DIR / "integrations" / "ui" / "apps.css",
         "integrations/ui/apps.js": BASE_DIR / "integrations" / "ui" / "apps.js",
         "integrations/ui/integration_prompt.js": BASE_DIR / "integrations" / "ui" / "integration_prompt.js",
+        "ai_execution/ui/confirmation.js": BASE_DIR / "ai_execution" / "ui" / "confirmation.js",
     }
     asset_status = {
         name: {
@@ -5309,6 +5327,28 @@ app.include_router(
     )
 )
 
+AI_EXECUTION_SERVICE = AIExecutionService(
+    get_integrations=list_composio_integrations,
+    get_tool_context=get_composio_tool_context,
+    execute_tool=execute_composio_tool,
+    search_memory=qdrant_search_memory,
+    supabase_health=supabase_health_check,
+    redis_health=redis_health_check,
+    set_temporary_state=redis_set_execution_state,
+    get_temporary_state=redis_get_execution_state,
+    capture_error=capture_operational_error,
+    redact=redact_text,
+    scrub=scrub_sensitive_data,
+)
+
+app.include_router(
+    create_ai_execution_router(
+        service=AI_EXECUTION_SERVICE,
+        current_user=current_user,
+        distributed_lock=redis_distributed_lock,
+    )
+)
+
 
 @app.middleware("http")
 async def sentry_request_context(request: Request, call_next):
@@ -5396,7 +5436,10 @@ async def inject_clarity_loader(request: Request, call_next):
     async for chunk in response.body_iterator:
         chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
     body = b"".join(chunks)
-    scripts = [b'<script src="/integration_prompt.js"></script>']
+    scripts = [
+        b'<script src="/integration_prompt.js"></script>',
+        b'<script src="/ai_confirmation.js"></script>',
+    ]
     if CLARITY_PROJECT_ID:
         scripts.append(b'<script src="/clarity.js"></script>')
     for marker in scripts:

@@ -176,6 +176,22 @@ class RedisClientTests(unittest.TestCase):
         )
         self.assertTrue(redis_client.delete_session_cache("session-hash"))
 
+        self.assertTrue(
+            redis_client.set_execution_state(
+                "user-1",
+                "request-1",
+                {"status": "awaiting_confirmation"},
+            )
+        )
+        execution = redis_client.get_execution_state("user-1", "request-1")
+        self.assertEqual(execution["status"], "awaiting_confirmation")
+        self.assertIsNone(
+            redis_client.get_execution_state("user-2", "request-1")
+        )
+        self.assertTrue(
+            redis_client.delete_execution_state("user-1", "request-1")
+        )
+
     def test_queue_rate_limit_and_distributed_lock(self):
         queued = redis_client.enqueue_background_job(
             "benchmark.refresh",

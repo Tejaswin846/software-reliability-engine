@@ -158,6 +158,44 @@ cache hit rate, queue depth, and Redis memory usage. See
 [UPSTASH_REDIS.md](UPSTASH_REDIS.md) for the complete architecture and
 configuration reference.
 
+## Reliability-First AI Execution
+
+Software separates AI planning from execution. The AI may classify a request
+and propose a JSON plan, but important actions remain blocked until the system
+has validated required fields, verified live tools and data sources, and
+received human confirmation for high-risk work.
+
+The control flow is:
+
+```text
+Intent -> Risk -> Plan -> Validate -> Verify -> Confirm -> Execute -> Audit
+```
+
+High-risk actions such as sending email, modifying or deleting data, creating
+calendar events, publishing content, or calling side-effecting external tools
+return a native **Review before running** card. Confirming the card authorizes
+one request-scoped execution. Cancelling records the decision and leaves the
+action unexecuted.
+
+Qdrant supplies memory context only. It is never treated as execution truth.
+Connected-app status and permissions come from the authenticated tool session,
+database availability is checked from live providers, and Redis stores only
+temporary request state. The append-only SQLite audit remains the durable
+record.
+
+API routes:
+
+```text
+POST /api/ai/plan
+POST /api/ai/validate
+POST /api/ai/confirm
+POST /api/ai/execute
+GET  /api/ai/audit/{request_id}
+```
+
+See [AI_EXECUTION_ARCHITECTURE.md](AI_EXECUTION_ARCHITECTURE.md) for request
+contracts, risk policy, and frontend integration.
+
 ## Why Software Exists
 
 AI agents often work in demos and simulations, then fail in real execution because of:

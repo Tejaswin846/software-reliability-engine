@@ -14,8 +14,14 @@
       window.SoftwareApps.requireConnection(body);
       return body;
     }
+    if (body.confirmation_required && window.SoftwareAI?.requestConfirmation) {
+      return window.SoftwareAI.requestConfirmation(body);
+    }
     if (!response.ok || body.ok === false) {
-      throw new Error(body.detail || body.message || `Request failed: ${response.status}`);
+      const error = new Error(body.detail || body.error || body.message || `Request failed: ${response.status}`);
+      error.response = body;
+      error.status = response.status;
+      throw error;
     }
     return body;
   }

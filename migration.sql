@@ -244,6 +244,36 @@ CREATE TABLE IF NOT EXISTS human_approvals (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS ai_execution_requests (
+    request_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    request_text TEXT NOT NULL,
+    intent TEXT NOT NULL,
+    risk_level TEXT NOT NULL,
+    status TEXT NOT NULL,
+    plan_json TEXT NOT NULL DEFAULT '{}',
+    validation_result_json TEXT NOT NULL DEFAULT '{}',
+    verification_result_json TEXT NOT NULL DEFAULT '{}',
+    confirmation_status TEXT NOT NULL DEFAULT 'not_required',
+    execution_result_json TEXT NOT NULL DEFAULT '{}',
+    chat_id TEXT,
+    workflow_id TEXT,
+    return_to TEXT NOT NULL DEFAULT '/',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS ai_execution_audit_events (
+    event_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL REFERENCES ai_execution_requests(request_id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL,
+    stage TEXT NOT NULL,
+    status TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_projects_user_created
     ON projects(user_id, created_at);
 
@@ -342,6 +372,15 @@ CREATE INDEX IF NOT EXISTS idx_decision_verifications_decision
 
 CREATE INDEX IF NOT EXISTS idx_human_approvals_decision
     ON human_approvals(decision_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ai_execution_user_created
+    ON ai_execution_requests(user_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ai_execution_status_created
+    ON ai_execution_requests(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_ai_execution_audit_request_created
+    ON ai_execution_audit_events(request_id, created_at);
 
 -- Existing databases need these columns added once. SQLite does not support
 -- ADD COLUMN IF NOT EXISTS in all versions, so the application also performs

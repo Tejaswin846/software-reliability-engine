@@ -56,6 +56,8 @@ services:
         value: "21600"
       - key: SOFTWARE_SESSION_CACHE_TTL_SECONDS
         value: "3600"
+      - key: SOFTWARE_AI_EXECUTION_STATE_TTL_SECONDS
+        value: "1800"
       - key: SOFTWARE_REDIS_QUEUE_MAX_LENGTH
         value: "10000"
       - key: SOFTWARE_REDIS_RETRIES
