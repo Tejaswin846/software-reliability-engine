@@ -7,3 +7,4 @@ requests==2.34.2
 pydantic==2.13.4
 stripe>=10,<15
 supabase==2.31.0
+qdrant-client==1.18.0

@@ -277,6 +277,11 @@ Microsoft Clarity analytics is loaded globally when `CLARITY_PROJECT_ID` is
 set. It tracks dashboard visits, benchmark runner visits, install clicks, and
 completed benchmark runs.
 
+Qdrant Cloud provides user-scoped long-term chat memory when `QDRANT_URL` and
+`QDRANT_API_KEY` are configured. User messages are stored in the
+`software_memory` collection, relevant memories are returned as
+`memory_context`, and Qdrant outages do not interrupt chat persistence.
+
 ## Production Notes
 
 Set these environment variables:

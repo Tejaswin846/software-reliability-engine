@@ -46,3 +46,7 @@ SUPABASE_ANON_KEY=replace-with-your-supabase-anon-key
 
 # Microsoft Clarity browser analytics.
 CLARITY_PROJECT_ID=xc0zbrjy3z
+
+# Qdrant Cloud long-term chat memory.
+QDRANT_URL=https://your-cluster.region.cloud.qdrant.io
+QDRANT_API_KEY=replace-with-your-qdrant-api-key

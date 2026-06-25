@@ -26,6 +26,10 @@ services:
         sync: false
       - key: CLARITY_PROJECT_ID
         value: xc0zbrjy3z
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET

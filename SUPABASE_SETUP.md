@@ -8,6 +8,10 @@ dashboard and APIs.
 
 1. Create a Supabase project.
 2. Run `supabase_schema.sql` in the Supabase SQL editor.
+   The file is migration-safe and can be run again if `chats`, `messages`, or
+   `benchmark_runs` already exist. It creates missing tables and indexes, adds
+   missing columns, restores constraints where possible, enables RLS, recreates
+   the required policies, and installs the `chats.updated_at` trigger.
 3. In Supabase Authentication URL Configuration, add:
 
 ```text
@@ -72,3 +76,24 @@ credentials. This keeps the session across browser refreshes and protects
 
 If Supabase is not configured, local development continues to use the existing
 SQLite authentication flow. Password reset requires Supabase.
+
+## Schema Verification
+
+The final queries in `supabase_schema.sql` verify:
+
+- every required Software column exists,
+- the Supabase-managed `auth.users` table exists,
+- RLS is enabled on all three Software tables,
+- the expected policies exist,
+- the `software_chats_updated_at` trigger exists.
+
+The missing-column query should return zero rows.
+
+Do not create custom copies of `auth.users`, sessions, refresh tokens, or other
+Supabase Authentication tables. Supabase owns and migrates the `auth` schema.
+
+The current FastAPI integration uses `SUPABASE_ANON_KEY` from the server and
+performs ownership checks in the API, so the migration preserves its existing
+anon policies. For stronger database-level isolation, switch the trusted server
+client to a Supabase secret/service-role key, keep that key server-only, and
+replace the broad anon policies with authenticated `auth.uid()` policies.

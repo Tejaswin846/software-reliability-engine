@@ -68,6 +68,21 @@ except ImportError:
         supabase_is_configured,
     )
 
+try:
+    from .memory import (
+        get_recent_memories as qdrant_get_recent_memories,
+        memory_health_check,
+        save_memory as qdrant_save_memory,
+        search_memory as qdrant_search_memory,
+    )
+except ImportError:
+    from memory import (
+        get_recent_memories as qdrant_get_recent_memories,
+        memory_health_check,
+        save_memory as qdrant_save_memory,
+        search_memory as qdrant_search_memory,
+    )
+
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
@@ -5173,6 +5188,7 @@ def startup() -> None:
 def health_check(response: Response) -> Dict[str, Any]:
     checks = run_startup_checks()
     supabase = supabase_health_check()
+    memory = memory_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -5186,6 +5202,7 @@ def health_check(response: Response) -> Dict[str, Any]:
             "reliability_database": checks["reliability_database"]["ok"],
             "dashboard_assets": checks["dashboard_assets"]["ok"],
             "supabase": supabase,
+            "memory": memory,
         },
     }
 
@@ -5204,6 +5221,7 @@ def version() -> Dict[str, Any]:
 def status(response: Response) -> Dict[str, Any]:
     checks = run_startup_checks()
     supabase = supabase_health_check()
+    memory = memory_health_check()
     if not checks["ok"]:
         response.status_code = 503
     return {
@@ -5216,6 +5234,7 @@ def status(response: Response) -> Dict[str, Any]:
         "api_docs_enabled": ENVIRONMENT != "production",
         "domain": domain_config_payload(),
         "supabase": supabase,
+        "memory": memory,
         "startup_checks": checks,
     }
 
@@ -5682,6 +5701,40 @@ def api_supabase_health() -> Dict[str, Any]:
     return {"ok": health["ok"], "supabase": health}
 
 
+@app.get("/api/memory/health")
+def api_memory_health() -> Dict[str, Any]:
+    health = memory_health_check()
+    return {"ok": health["ok"], "memory": health}
+
+
+@app.get("/api/memory/recent")
+def api_recent_memories(
+    limit: int = Query(20, ge=1, le=100),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    memories = qdrant_get_recent_memories(user["id"], limit=limit)
+    return {
+        "ok": True,
+        "memories": memories,
+        "memory_available": memory_health_check()["available"],
+    }
+
+
+@app.get("/api/memory/search")
+def api_search_memories(
+    query: str = Query(..., min_length=1, max_length=2000),
+    limit: int = Query(5, ge=1, le=50),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    memories = qdrant_search_memory(user["id"], query, limit=limit)
+    return {
+        "ok": True,
+        "query": query,
+        "memories": memories,
+        "memory_available": memory_health_check()["available"],
+    }
+
+
 @app.post("/api/chats")
 def create_chat(
     payload: ChatCreate,
@@ -5714,6 +5767,12 @@ def save_chat_message(
     history = require_supabase_operation(history_result)
     if history["chat"] is None:
         raise HTTPException(status_code=404, detail="Chat not found.")
+    relevant_memories: List[Dict[str, Any]] = []
+    if payload.role == "user":
+        relevant_memories = qdrant_search_memory(
+            user["id"],
+            payload.content,
+        )
     result = supabase_save_message(
         chat_id=chat_id,
         user_id=user["id"],
@@ -5721,10 +5780,18 @@ def save_chat_message(
         content=payload.content,
         metadata=payload.metadata,
     )
+    message = require_supabase_operation(result)
+    memory_save = (
+        qdrant_save_memory(user["id"], payload.content)
+        if payload.role == "user"
+        else {"ok": True, "stored": False, "reason": "Only user messages are stored."}
+    )
     return {
         "ok": True,
-        "message": require_supabase_operation(result),
+        "message": message,
         "storage": "supabase",
+        "memory_context": relevant_memories,
+        "memory_save": memory_save,
     }
 
 
@@ -5742,6 +5809,7 @@ def open_chat(
         "ok": True,
         **history,
         "storage": "supabase",
+        "recent_memories": qdrant_get_recent_memories(user["id"]),
     }
 
 
