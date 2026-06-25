@@ -10,6 +10,10 @@
       },
     });
     const body = await response.json().catch(() => ({}));
+    if (body.connection_required && window.SoftwareApps?.requireConnection) {
+      window.SoftwareApps.requireConnection(body);
+      return body;
+    }
     if (!response.ok || body.ok === false) {
       throw new Error(body.detail || body.message || `Request failed: ${response.status}`);
     }

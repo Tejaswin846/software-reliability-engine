@@ -11,3 +11,4 @@ qdrant-client==1.18.0
 sentry-sdk[fastapi]==2.63.0
 composio==0.16.0
 composio-openai-agents==0.16.0
+cryptography>=43,<50

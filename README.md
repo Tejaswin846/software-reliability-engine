@@ -60,25 +60,29 @@ The `/health` and `/status` responses include a `monitoring` object showing
 whether Sentry is configured and initialized. `SENTRY_TRACES_SAMPLE_RATE`
 defaults to `0.2` and accepts values from `0.0` to `1.0`.
 
-## Composio Tools
+## Connected Apps
 
-Set the Composio API key in the environment:
+Set the connection-provider API key and Software encryption secrets in the
+environment:
 
 ```text
 COMPOSIO_API_KEY=replace-with-your-composio-api-key
+INTEGRATION_ENCRYPTION_KEY=replace-with-a-long-random-secret
+INTEGRATION_STATE_SECRET=replace-with-a-long-random-secret
 ```
 
-Software creates one cached Composio session per authenticated user using
-`OpenAIAgentsProvider`. Existing orchestration is preserved: Composio tools are
-added to the current workflow instead of creating a separate agent. Sessions are
-restricted to Gmail, Google Calendar, Google Drive, GitHub, Slack, and Notion,
-and connection-management tools let a user connect an application when needed.
+Open `/apps` to search and connect Gmail, Outlook, Google and Microsoft
+productivity apps, developer tools, storage providers, communication apps,
+databases, and AI providers. Each user has isolated connections, connection
+health, permission status, last-sync details, retry, and disconnect controls.
+Provider credentials remain in the managed connection vault. Software stores
+only encrypted connection metadata and resumable action state.
 
 Server-side agent orchestration can attach native OpenAI Agents tools without
 replacing existing tools:
 
 ```python
-from composio_service import attach_user_tools
+from integrations.composio_service import attach_user_tools
 
 agent_tools = attach_user_tools(user_id, existing_tools)
 ```
@@ -95,22 +99,30 @@ with monitor.track_workflow("connected-agent") as workflow:
     )
 ```
 
-Composio routes:
+When an action requires an app that is not connected, the API returns a
+`connection_required` response. The browser displays a native Software dialog,
+starts authorization, returns to the original conversation, executes the
+pending action, and emits a `software:integration-resumed` browser event with
+the result.
+
+Connected Apps routes:
 
 ```text
-GET  /api/composio/health
-GET  /api/composio/tools
-POST /api/composio/tools/refresh
+GET  /api/integrations
+GET  /api/integrations/status
+POST /api/integrations/connect
+POST /api/integrations/disconnect
+GET  /api/integrations/resume/{action_id}
 GET  /api/sdk/tools
 POST /api/sdk/tools/refresh
 POST /api/sdk/tools/execute
 ```
 
-Tool arguments are not written to reliability logs or Sentry. Failed discovery
-and execution are logged, captured by Sentry, and recorded as workflow tool
-events without exposing `COMPOSIO_API_KEY`. Tool execution is never placed in
-the SDK retry buffer because repeating a non-idempotent action could send a
-duplicate email, message, or calendar event.
+Tool arguments and credentials are not written to reliability logs or Sentry.
+Tool execution is never placed in the SDK retry buffer because repeating a
+non-idempotent action could send a duplicate email, message, or calendar event.
+See [CONNECTED_APPS.md](CONNECTED_APPS.md) for the complete flow and operations
+guide.
 
 ## Why Software Exists
 
@@ -205,6 +217,7 @@ with monitor.track_workflow("research-task") as workflow:
 ```text
 /                  Landing page
 /install           One-click SDK installer page
+/apps              Connect and manage external applications
 /benchmarks        Benchmark runner and sample data generator
 /register          Create account
 /login             Login

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from unittest.mock import patch
 
-import composio_service
+from integrations import composio_service
 
 
 @dataclass
@@ -60,12 +60,34 @@ class FakeComposio:
 
     def __init__(self, provider):
         self.provider = provider
+        self.connected_accounts = FakeConnectedAccounts()
 
     def create(self, **kwargs):
         self.__class__.create_calls.append(kwargs)
         session = FakeSession()
         self.__class__.sessions.append(session)
         return session
+
+
+class FakeConnectedAccounts:
+    def list(self, **kwargs):
+        user_id = kwargs["user_ids"][0]
+        return SimpleNamespace(
+            items=[
+                SimpleNamespace(
+                    id="ca_github",
+                    user_id=user_id,
+                    toolkit=SimpleNamespace(slug="github"),
+                    status="ACTIVE",
+                    status_reason=None,
+                    updated_at="2026-06-25T12:00:00+00:00",
+                    created_at="2026-06-25T11:00:00+00:00",
+                    auth_config=SimpleNamespace(auth_scheme="OAUTH2"),
+                    requested_scopes=["repo"],
+                    requested_user_scopes=[],
+                )
+            ]
+        )
 
 
 class ComposioServiceTests(unittest.TestCase):
@@ -100,7 +122,7 @@ class ComposioServiceTests(unittest.TestCase):
         self.assertEqual(len(FakeComposio.create_calls), 1)
         self.assertEqual(
             FakeComposio.create_calls[0]["toolkits"],
-            list(composio_service.SUPPORTED_TOOLKITS),
+            list(composio_service.SESSION_TOOLKITS),
         )
 
     def test_refresh_recreates_user_session(self) -> None:
@@ -139,7 +161,7 @@ class ComposioServiceTests(unittest.TestCase):
         ):
             context = composio_service.get_user_tool_context("user_1")
         self.assertTrue(context["available"])
-        self.assertEqual(context["connected_toolkits"][0]["slug"], "github")
+        self.assertEqual(context["connected_apps"][0]["id"], "github")
         self.assertEqual(context["tools"][0]["name"], "COMPOSIO_SEARCH_TOOLS")
 
     def test_missing_api_key_degrades_without_raising(self) -> None:

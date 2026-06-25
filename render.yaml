@@ -40,6 +40,10 @@ services:
         value: production
       - key: COMPOSIO_API_KEY
         sync: false
+      - key: INTEGRATION_ENCRYPTION_KEY
+        generateValue: true
+      - key: INTEGRATION_STATE_SECRET
+        generateValue: true
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET

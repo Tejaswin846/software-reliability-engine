@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Apps | Software</title>
+    <link rel="stylesheet" href="/saas.css">
+    <link rel="stylesheet" href="/apps.css">
+  </head>
+  <body data-requires-auth="true">
+    <header class="topbar apps-topbar">
+      <a class="brand" href="/dashboard">
+        <span>Software</span>
+        <strong>Apps</strong>
+      </a>
+      <nav class="nav">
+        <a href="/dashboard">Dashboard</a>
+        <a href="/projects">Projects</a>
+        <a href="/install">Install SDK</a>
+        <span data-user-email class="muted">--</span>
+        <button type="button" class="secondary" data-logout>Logout</button>
+      </nav>
+    </header>
+
+    <main class="apps-shell">
+      <section class="apps-heading">
+        <div>
+          <p class="apps-eyebrow">Connected Apps</p>
+          <h1>Give Software access to the tools you already use</h1>
+          <p class="apps-subtitle">Connect once. Software can then use approved apps when a workflow needs them.</p>
+        </div>
+        <div class="connection-summary" aria-live="polite">
+          <strong id="connected-count">--</strong>
+          <span>apps connected</span>
+        </div>
+      </section>
+
+      <section class="apps-controls" aria-label="Filter apps">
+        <label class="search-box">
+          <span class="search-icon" aria-hidden="true">⌕</span>
+          <input id="app-search" type="search" placeholder="Search apps" autocomplete="off">
+        </label>
+        <div id="category-tabs" class="category-tabs" role="tablist"></div>
+      </section>
+
+      <div id="apps-message" class="message" role="status"></div>
+      <section id="apps-grid" class="apps-grid" aria-live="polite">
+        <div class="apps-loading">Loading your apps...</div>
+      </section>
+    </main>
+
+    <div id="permissions-dialog" class="permissions-dialog" hidden>
+      <div class="permissions-backdrop" data-close-permissions></div>
+      <section class="permissions-sheet" role="dialog" aria-modal="true" aria-labelledby="permissions-title">
+        <button class="dialog-close" type="button" data-close-permissions aria-label="Close">×</button>
+        <h2 id="permissions-title">Permissions</h2>
+        <p id="permissions-app" class="muted"></p>
+        <ul id="permissions-list"></ul>
+      </section>
+    </div>
+
+    <script src="/auth.js"></script>
+    <script src="/apps.js"></script>
+  </body>
+</html>

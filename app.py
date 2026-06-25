@@ -102,7 +102,7 @@ except ImportError:
     )
 
 try:
-    from .composio_service import (
+    from .integrations.composio_service import (
         composio_health_check,
         execute_tool as execute_composio_tool,
         get_user_tool_context as get_composio_tool_context,
@@ -111,7 +111,7 @@ try:
         tool_descriptors as composio_tool_descriptors,
     )
 except ImportError:
-    from composio_service import (
+    from integrations.composio_service import (
         composio_health_check,
         execute_tool as execute_composio_tool,
         get_user_tool_context as get_composio_tool_context,
@@ -119,6 +119,11 @@ except ImportError:
         refresh_tools as refresh_composio_tools,
         tool_descriptors as composio_tool_descriptors,
     )
+
+try:
+    from .integrations.routes import create_integrations_router
+except ImportError:
+    from integrations.routes import create_integrations_router
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -1649,6 +1654,8 @@ class ComposioToolExecuteRequest(BaseModel):
     arguments: Dict[str, Any] = Field(default_factory=dict)
     account: Optional[str] = Field(None, max_length=240)
     agent_name: Optional[str] = Field(None, max_length=160)
+    chat_id: Optional[str] = Field(None, max_length=180)
+    return_to: str = Field("/apps", min_length=1, max_length=1000)
 
 
 class SDKTestWorkflowRequest(BaseModel):
@@ -5137,6 +5144,10 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "saas.css": BASE_DIR / "saas.css",
         "saas.js": BASE_DIR / "saas.js",
         "auth.js": BASE_DIR / "auth.js",
+        "integrations/ui/apps.html": BASE_DIR / "integrations" / "ui" / "apps.html",
+        "integrations/ui/apps.css": BASE_DIR / "integrations" / "ui" / "apps.css",
+        "integrations/ui/apps.js": BASE_DIR / "integrations" / "ui" / "apps.js",
+        "integrations/ui/integration_prompt.js": BASE_DIR / "integrations" / "ui" / "integration_prompt.js",
     }
     asset_status = {
         name: {
@@ -5174,6 +5185,43 @@ def service_uptime_seconds() -> float:
     return round((datetime.now(timezone.utc) - SERVICE_STARTED_AT).total_seconds(), 2)
 
 
+def record_resumed_integration_action(
+    user_id: str,
+    resume: Dict[str, Any],
+) -> None:
+    workflow_id = resume.get("workflow_id")
+    if not workflow_id:
+        return
+    result = resume.get("result") or {}
+    with connect() as db:
+        workflow = db.execute(
+            """
+            SELECT workflow_id, user_id
+            FROM sdk_workflows
+            WHERE workflow_id = ?
+            """,
+            (workflow_id,),
+        ).fetchone()
+        if not workflow or str(workflow["user_id"]) != str(user_id):
+            return
+        sdk_insert_event(
+            db,
+            workflow_id,
+            "tool_call",
+            stage_name="connected_app_resume",
+            tool_name=resume.get("tool_slug"),
+            name=resume.get("tool_slug"),
+            success=bool(result.get("ok")),
+            error_type=None if result.get("ok") else "connected_app_action_failure",
+            error_message=result.get("error"),
+            payload={
+                "provider": "connected_apps",
+                "resumed_after_connection": True,
+                "agent_name": resume.get("agent_name"),
+            },
+        )
+
+
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
@@ -5190,6 +5238,16 @@ if ALLOWED_ORIGINS:
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
+app.include_router(
+    create_integrations_router(
+        current_user=current_user,
+        protected_page=protected_page,
+        public_base_url=PUBLIC_BASE_URL,
+        save_memory=qdrant_save_memory,
+        record_resumed_action=record_resumed_integration_action,
+    )
+)
 
 
 @app.middleware("http")
@@ -5225,8 +5283,7 @@ async def inject_clarity_loader(request: Request, call_next):
     response = await call_next(request)
     content_type = response.headers.get("content-type", "")
     if (
-        not CLARITY_PROJECT_ID
-        or request.method == "HEAD"
+        request.method == "HEAD"
         or not content_type.lower().startswith("text/html")
     ):
         return response
@@ -5235,9 +5292,12 @@ async def inject_clarity_loader(request: Request, call_next):
     async for chunk in response.body_iterator:
         chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
     body = b"".join(chunks)
-    marker = b'<script src="/clarity.js"></script>'
-    if marker not in body:
-        body = body.replace(b"</head>", marker + b"</head>", 1)
+    scripts = [b'<script src="/integration_prompt.js"></script>']
+    if CLARITY_PROJECT_ID:
+        scripts.append(b'<script src="/clarity.js"></script>')
+    for marker in scripts:
+        if marker not in body:
+            body = body.replace(b"</head>", marker + b"</head>", 1)
 
     headers = {
         key: value
@@ -7169,8 +7229,11 @@ def sdk_execute_composio_tool(
         account=payload.account,
         workflow_id=payload.workflow_id,
         agent_name=payload.agent_name,
+        chat_id=payload.chat_id,
+        return_to=payload.return_to,
     )
     latency_ms = max(0, int((time.perf_counter() - started) * 1000))
+    connection_required = bool(result.get("connection_required"))
     with connect() as db:
         event_id = sdk_insert_event(
             db,
@@ -7179,14 +7242,20 @@ def sdk_execute_composio_tool(
             stage_name="composio",
             tool_name=payload.tool_slug.upper(),
             name=payload.tool_slug.upper(),
-            success=bool(result["ok"]),
+            success=None if connection_required else bool(result["ok"]),
             latency_ms=latency_ms,
-            error_type=None if result["ok"] else "composio_tool_failure",
+            error_type=(
+                None
+                if result["ok"] or connection_required
+                else "connected_app_action_failure"
+            ),
             error_message=result.get("error"),
             payload={
-                "provider": "composio",
+                "provider": "connected_apps",
                 "log_id": result.get("log_id"),
                 "agent_name": payload.agent_name,
+                "connection_required": connection_required,
+                "pending_action_id": result.get("pending_action_id"),
             },
         )
         record_usage(
@@ -7198,12 +7267,16 @@ def sdk_execute_composio_tool(
             metadata={
                 "workflow_id": payload.workflow_id,
                 "tool_name": payload.tool_slug.upper(),
-                "provider": "composio",
-                "success": bool(result["ok"]),
+                "provider": "connected_apps",
+                "success": None if connection_required else bool(result["ok"]),
             },
         )
     return {
         "ok": bool(result["ok"]),
+        "connection_required": connection_required,
+        "app": result.get("app"),
+        "pending_action_id": result.get("pending_action_id"),
+        "message": result.get("message"),
         "event_id": event_id,
         "workflow_id": payload.workflow_id,
         "tool_slug": payload.tool_slug.upper(),
