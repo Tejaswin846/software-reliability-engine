@@ -8,7 +8,7 @@ Software is a reliability platform for AI agents.
 | --- | --- |
 | Getting Started | Understand core concepts and workflow |
 | Installation | Install SDK and run the server |
-| Authentication | Register, login, JWT usage |
+| Authentication | Clerk sign-up, login, reset, OAuth, and JWT/session usage |
 | Projects | Create and manage project scopes |
 | API Keys | Generate, store, and revoke SDK keys |
 | Pricing | Free, Pro, and Enterprise plan limits |
@@ -45,7 +45,7 @@ The same docs are available in the web app:
 
 ### User
 
-An account owner. Users authenticate with email and password. Passwords are hashed with bcrypt.
+An account owner authenticated by Clerk. Software stores the Clerk user id on user-owned rows.
 
 ### Project
 
@@ -122,6 +122,15 @@ POST /auth/register
 POST /auth/login
 POST /auth/logout
 GET  /auth/me
+```
+
+Clerk handles the browser sign-up, login, password reset, email verification,
+Google OAuth, GitHub OAuth, and session lifecycle. SDK installation remains
+public:
+
+```bash
+pip install software-sdk
+npm install software-sdk
 ```
 
 ## Project Endpoints
@@ -254,4 +263,4 @@ Check:
 
 ### Cannot access project
 
-Projects are user-owned. Login as the user who created the project.
+Projects are user-owned. Sign in with the Clerk account that created the project.

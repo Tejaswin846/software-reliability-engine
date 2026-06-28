@@ -1,1 +1,28 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Troubleshooting - Software Docs</title><link rel="stylesheet" href="/docs.css"></head><body><header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/docs/quick-start">Quick Start</a><a href="/health">Health</a></nav></header><main class="layout"><aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/installation">Installation</a><a href="/docs/api-keys">API Keys</a></aside><article class="doc"><h1>Troubleshooting</h1><h2>401 Missing bearer token</h2><p>You are calling a user/project endpoint without <code>Authorization: Bearer YOUR_JWT</code>. Login first.</p><h2>403 Invalid SDK API key</h2><p>The SDK key is missing, invalid, revoked, or belongs to another project. Generate a fresh key in <a href="/api-keys">/api-keys</a>.</p><h2>Workflow not visible</h2><p>Confirm your SDK uses the same API URL as the dashboard and that <code>workflow.complete()</code> ran.</p><h2>Dashboard shows global data</h2><p>Login first. The dashboard switches to <code>/api/me/dashboard</code> only when a JWT is stored in the browser.</p><h2>Server health fails</h2><p>Open <code>/health</code> and check database and dashboard asset status.</p><h2>Install fails</h2><p>Use Python 3.10+ and install from the project root with <code>pip install -e .</code> during local development.</p></article></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Troubleshooting - Software Docs</title>
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/docs/quick-start">Quick Start</a><a href="/health">Health</a></nav></header>
+  <main class="layout">
+    <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/installation">Installation</a><a href="/docs/api-keys">API Keys</a></aside>
+    <article class="doc">
+      <h1>Troubleshooting</h1>
+      <h2>401 Missing bearer token</h2>
+      <p>The endpoint is a protected cloud feature. Sign in with Clerk or send a project API key. You can still install and use the SDK locally without signing in.</p>
+      <h2>403 Invalid SDK API key</h2>
+      <p>The SDK key is missing, invalid, revoked, or belongs to another project. Generate a fresh key in <a href="/api-keys">/api-keys</a>.</p>
+      <h2>Workflow not visible</h2>
+      <p>Confirm your SDK uses the same API URL as the dashboard and that <code>workflow.complete()</code> ran.</p>
+      <h2>Server health fails</h2>
+      <p>Open <code>/health</code> for lightweight status and <code>/status</code> for deep provider checks.</p>
+      <h2>Install fails</h2>
+      <p>Use Python 3.10+ and install from PyPI with <code>pip install software-sdk</code>. Local repo development can use <code>pip install -e .</code>.</p>
+    </article>
+  </main>
+</body>
+</html>

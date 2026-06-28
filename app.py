@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt
+from jwt import PyJWKClient
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
@@ -44,31 +45,21 @@ except ImportError:
 
 try:
     from .supabase_client import (
-        auth_get_user as supabase_auth_get_user,
-        auth_request_password_reset as supabase_auth_request_password_reset,
-        auth_sign_in as supabase_auth_sign_in,
-        auth_sign_up as supabase_auth_sign_up,
-        auth_update_password as supabase_auth_update_password,
         create_chat as supabase_create_chat,
         get_chat_history as supabase_get_chat_history,
         save_benchmark_run as supabase_save_benchmark_run,
         save_message as supabase_save_message,
         supabase_health_check,
-        supabase_is_configured,
+        upsert_user_profile as supabase_upsert_user_profile,
     )
 except ImportError:
     from supabase_client import (
-        auth_get_user as supabase_auth_get_user,
-        auth_request_password_reset as supabase_auth_request_password_reset,
-        auth_sign_in as supabase_auth_sign_in,
-        auth_sign_up as supabase_auth_sign_up,
-        auth_update_password as supabase_auth_update_password,
         create_chat as supabase_create_chat,
         get_chat_history as supabase_get_chat_history,
         save_benchmark_run as supabase_save_benchmark_run,
         save_message as supabase_save_message,
         supabase_health_check,
-        supabase_is_configured,
+        upsert_user_profile as supabase_upsert_user_profile,
     )
 
 try:
@@ -183,6 +174,15 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("SOFTWARE_JWT_EXPIRE_MINUTES", "1440"))
 SESSION_COOKIE_NAME = os.getenv("SOFTWARE_SESSION_COOKIE", "software_session")
 SESSION_COOKIE_SECURE = ENVIRONMENT == "production"
+CLERK_PUBLISHABLE_KEY = os.getenv("CLERK_PUBLISHABLE_KEY", "").strip()
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY", "").strip()
+CLERK_JWT_ISSUER = os.getenv("CLERK_JWT_ISSUER", "").strip().rstrip("/")
+CLERK_JWKS_URL = os.getenv("CLERK_JWKS_URL", "").strip() or (
+    f"{CLERK_JWT_ISSUER}/.well-known/jwks.json" if CLERK_JWT_ISSUER else ""
+)
+CLERK_AUTH_REQUIRED = os.getenv("SOFTWARE_CLERK_AUTH_REQUIRED", os.getenv("NEXORA_CLERK_AUTH_REQUIRED", "true")).lower() not in {"0", "false", "no", "off"}
+CLERK_AUTH_TIMEOUT = float(os.getenv("CLERK_AUTH_TIMEOUT", "10"))
+CLERK_JWK_CLIENT = PyJWKClient(CLERK_JWKS_URL) if CLERK_JWKS_URL else None
 STATIC_SDK_API_KEYS = [
     key.strip()
     for key in os.getenv("SOFTWARE_SDK_API_KEYS", "").split(",")
@@ -1907,6 +1907,103 @@ def clear_session_cookie(response: Response) -> None:
     )
 
 
+def clerk_is_configured() -> bool:
+    return bool(CLERK_PUBLISHABLE_KEY and CLERK_JWT_ISSUER and CLERK_JWKS_URL and CLERK_JWK_CLIENT)
+
+
+def clerk_public_config() -> Dict[str, Any]:
+    return {
+        "provider": "clerk",
+        "configured": clerk_is_configured(),
+        "clerk_publishable_key": CLERK_PUBLISHABLE_KEY,
+        "clerk_jwt_issuer": CLERK_JWT_ISSUER,
+        "oauth_providers": ["google", "github"],
+    }
+
+
+def verify_clerk_token(token: str) -> Dict[str, Any]:
+    if not token:
+        raise HTTPException(status_code=401, detail="Missing Clerk session token.")
+    if not clerk_is_configured() or CLERK_JWK_CLIENT is None:
+        raise HTTPException(status_code=503, detail="Clerk authentication is not configured.")
+    try:
+        signing_key = CLERK_JWK_CLIENT.get_signing_key_from_jwt(token).key
+        return jwt.decode(
+            token,
+            signing_key,
+            algorithms=["RS256"],
+            issuer=CLERK_JWT_ISSUER,
+            options={"verify_aud": False},
+        )
+    except jwt.ExpiredSignatureError as error:
+        raise HTTPException(status_code=401, detail="Clerk session expired.") from error
+    except Exception as error:
+        raise HTTPException(status_code=401, detail="Invalid Clerk session.") from error
+
+
+def fetch_clerk_user_profile(user_id: str) -> Dict[str, Any]:
+    if not CLERK_SECRET_KEY:
+        return {}
+    try:
+        response = requests.get(
+            f"https://api.clerk.com/v1/users/{user_id}",
+            headers={"Authorization": f"Bearer {CLERK_SECRET_KEY}", "Accept": "application/json"},
+            timeout=CLERK_AUTH_TIMEOUT,
+        )
+        if response.status_code >= 400:
+            return {}
+        return response.json() if response.content else {}
+    except requests.RequestException:
+        return {}
+
+
+def clerk_email_from_profile(profile: Dict[str, Any]) -> str:
+    addresses = profile.get("email_addresses")
+    primary_id = profile.get("primary_email_address_id")
+    if isinstance(addresses, list):
+        for address in addresses:
+            if isinstance(address, dict) and address.get("id") == primary_id and address.get("email_address"):
+                return str(address["email_address"])
+        for address in addresses:
+            if isinstance(address, dict) and address.get("email_address"):
+                return str(address["email_address"])
+    return ""
+
+
+def ensure_clerk_user(claims: Dict[str, Any]) -> Dict[str, Any]:
+    user_id = str(claims.get("sub") or "").strip()
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Clerk session did not include a user id.")
+    email = str(
+        claims.get("email")
+        or claims.get("email_address")
+        or claims.get("primary_email_address")
+        or ""
+    ).strip()
+    profile: Dict[str, Any] = {}
+    if not email:
+        profile = fetch_clerk_user_profile(user_id)
+        email = clerk_email_from_profile(profile)
+    if not email:
+        email = f"{user_id}@clerk.local"
+    user = ensure_external_user(user_id, email, now_iso())
+    supabase_upsert_user_profile(
+        user_id=user_id,
+        email=email,
+        metadata={
+            "provider": "clerk",
+            "email_verified": bool(claims.get("email_verified")),
+            "first_name": claims.get("first_name") or profile.get("first_name"),
+            "last_name": claims.get("last_name") or profile.get("last_name"),
+        },
+    )
+    redis_set_session_cache(
+        session_cache_id(user_id),
+        {"user": user, "provider": "clerk"},
+    )
+    return user
+
+
 def ensure_external_user(user_id: str, email: str, created_at: Optional[str] = None) -> Dict[str, Any]:
     init_db()
     normalized_email = normalize_email(email)
@@ -1946,27 +2043,13 @@ def authenticated_user_from_token(token: str) -> Dict[str, Any]:
     try:
         user_id = decode_access_token(token)
     except HTTPException as local_error:
-        if not supabase_is_configured():
-            raise local_error
-        cached_external = redis_get_session_cache(session_cache_id(token))
-        if cached_external and cached_external.get("user"):
-            return dict(cached_external["user"])
-        result = supabase_auth_get_user(token)
-        if not result.get("ok") or not result.get("data"):
-            raise HTTPException(status_code=401, detail="Invalid session.")
-        external = result["data"]
-        if not external.get("id") or not external.get("email"):
-            raise HTTPException(status_code=401, detail="Supabase user is incomplete.")
-        user = ensure_external_user(
-            external["id"],
-            external["email"],
-            external.get("created_at"),
-        )
-        redis_set_session_cache(
-            session_cache_id(token),
-            {"user": user, "provider": "supabase"},
-        )
-        return user
+        if clerk_is_configured():
+            claims = verify_clerk_token(token)
+            cached_clerk = redis_get_session_cache(session_cache_id(str(claims.get("sub", ""))))
+            if cached_clerk and cached_clerk.get("user"):
+                return dict(cached_clerk["user"])
+            return ensure_clerk_user(claims)
+        raise local_error
 
     cached_local = redis_get_session_cache(session_cache_id(token))
     if cached_local and cached_local.get("user"):
@@ -2011,6 +2094,8 @@ def optional_current_user(
 
 
 def protected_page(request: Request, filename: str) -> Response:
+    if clerk_is_configured() and CLERK_AUTH_REQUIRED:
+        return FileResponse(BASE_DIR / filename)
     if optional_current_user(request, None) is None:
         target = request.url.path
         return RedirectResponse(f"/login?next={target}", status_code=303)
@@ -2491,7 +2576,10 @@ def require_sdk_api_key(
         prefix = "Bearer "
         supplied = authorization[len(prefix):].strip() if authorization.startswith(prefix) else authorization.strip()
     if not supplied:
-        raise HTTPException(status_code=401, detail="Missing SDK API key.")
+        raise HTTPException(
+            status_code=401,
+            detail="Authentication required for this cloud feature. You can still install and use the SDK locally without signing in.",
+        )
     supplied_hash = hash_api_key(supplied)
     init_db()
     with connect() as db:
@@ -5471,29 +5559,18 @@ def startup() -> None:
 
 @app.get("/health")
 def health_check(response: Response) -> Dict[str, Any]:
-    checks = run_startup_checks()
-    supabase = supabase_health_check()
-    memory = memory_health_check()
-    monitoring = sentry_health_check()
-    composio_status = composio_health_check()
-    redis_status = redis_health_check()
-    if not checks["ok"]:
-        response.status_code = 503
     return {
-        "ok": checks["ok"],
+        "ok": True,
         "service": APP_NAME,
         "version": APP_VERSION,
         "environment": ENVIRONMENT,
         "uptime_seconds": service_uptime_seconds(),
+        "auth": {
+            "provider": "clerk" if clerk_is_configured() else "local",
+            "configured": clerk_is_configured(),
+        },
         "checks": {
-            "api_database": checks["api_database"]["ok"],
-            "reliability_database": checks["reliability_database"]["ok"],
-            "dashboard_assets": checks["dashboard_assets"]["ok"],
-            "supabase": supabase,
-            "memory": memory,
-            "monitoring": monitoring,
-            "composio": composio_status,
-            "redis": redis_status,
+            "startup": STARTUP_CHECKS.get("ok") if STARTUP_CHECKS else None,
         },
     }
 
@@ -5674,8 +5751,13 @@ def onboarding_page() -> FileResponse:
 
 
 @app.get("/install", include_in_schema=False)
-def install_page(request: Request) -> Response:
-    return protected_page(request, "install.html")
+def install_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "install.html")
+
+
+@app.get("/sdk", include_in_schema=False)
+def sdk_page() -> FileResponse:
+    return FileResponse(BASE_DIR / "install.html")
 
 
 @app.get("/benchmarks", include_in_schema=False)
@@ -5816,6 +5898,20 @@ def api_keys_page(request: Request) -> Response:
     return protected_page(request, "api_keys.html")
 
 
+@app.get("/auth/config")
+def auth_config(request: Request) -> Dict[str, Any]:
+    base_url = public_base_url(request)
+    return {
+        "ok": True,
+        **clerk_public_config(),
+        "sign_in_url": f"{base_url}/login",
+        "sign_up_url": f"{base_url}/register",
+        "reset_redirect_url": f"{base_url}/reset-password",
+        "email_redirect_url": f"{base_url}/dashboard",
+        "sdk_install_public": True,
+    }
+
+
 def local_auth_register(payload: AuthRegister) -> Dict[str, Any]:
     init_db()
     email = normalize_email(payload.email)
@@ -5877,67 +5973,29 @@ def local_auth_login(payload: AuthLogin) -> Dict[str, Any]:
 
 @app.post("/auth/register")
 def auth_register(payload: AuthRegister, response: Response, request: Request) -> Dict[str, Any]:
-    if not supabase_is_configured():
-        result = local_auth_register(payload)
-        set_session_cookie(response, result["access_token"])
-        return result
-
-    email = normalize_email(payload.email)
-    redirect_to = f"{public_base_url(request)}/login?confirmed=1"
-    auth_result = supabase_auth_sign_up(
-        email=email,
-        password=payload.password,
-        email_redirect_to=redirect_to,
-    )
-    data = require_supabase_operation(auth_result)
-    external_user = data.get("user")
-    if not external_user:
-        raise HTTPException(status_code=502, detail="Supabase did not return a user.")
-    user = ensure_external_user(
-        external_user["id"],
-        external_user["email"] or email,
-        external_user.get("created_at"),
-    )
-    session = data.get("session")
-    result: Dict[str, Any] = {
-        "ok": True,
-        "user": user,
-        "provider": "supabase",
-        "confirmation_required": session is None,
-    }
-    if session:
-        token = create_access_token(user["id"])
-        set_session_cookie(response, token["access_token"])
-        result.update(token)
+    if clerk_is_configured():
+        return {
+            "ok": True,
+            "provider": "clerk",
+            "message": "Account creation is handled by Clerk. Use the Software sign-up page.",
+            "confirmation_required": True,
+        }
+    result = local_auth_register(payload)
+    set_session_cookie(response, result["access_token"])
     return result
 
 
 @app.post("/auth/login")
 def auth_login(payload: AuthLogin, response: Response) -> Dict[str, Any]:
-    if not supabase_is_configured():
-        result = local_auth_login(payload)
-        set_session_cookie(response, result["access_token"])
-        return result
-
-    email = normalize_email(payload.email)
-    auth_result = supabase_auth_sign_in(email=email, password=payload.password)
-    data = require_supabase_operation(auth_result)
-    external_user = data.get("user")
-    if not external_user:
-        raise HTTPException(status_code=401, detail="Invalid email or password.")
-    user = ensure_external_user(
-        external_user["id"],
-        external_user["email"] or email,
-        external_user.get("created_at"),
-    )
-    token = create_access_token(user["id"])
-    set_session_cookie(response, token["access_token"])
-    return {
-        "ok": True,
-        "user": user,
-        "provider": "supabase",
-        **token,
-    }
+    if clerk_is_configured():
+        return {
+            "ok": True,
+            "provider": "clerk",
+            "message": "Login is handled by Clerk. Use the Software sign-in page and send the Clerk session token as a bearer token.",
+        }
+    result = local_auth_login(payload)
+    set_session_cookie(response, result["access_token"])
+    return result
 
 
 @app.post("/auth/logout")
@@ -5951,7 +6009,7 @@ def auth_logout(
     if token:
         redis_delete_session_cache(session_cache_id(token))
     clear_session_cookie(response)
-    return {"ok": True, "message": "Logged out."}
+    return {"ok": True, "message": "Logged out. Clerk sessions are signed out in the browser."}
 
 
 @app.get("/auth/me")
@@ -5961,38 +6019,24 @@ def auth_me(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
 
 @app.post("/auth/password-reset")
 def auth_password_reset(payload: PasswordResetRequest, request: Request) -> Dict[str, Any]:
-    if not supabase_is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Password reset requires Supabase Authentication.",
-        )
-    email = normalize_email(payload.email)
-    result = supabase_auth_request_password_reset(
-        email=email,
-        redirect_to=f"{public_base_url(request)}/reset-password",
-    )
-    require_supabase_operation(result)
-    return {
-        "ok": True,
-        "message": "If the account exists, a password reset link has been sent.",
-    }
+    if clerk_is_configured():
+        return {
+            "ok": True,
+            "provider": "clerk",
+            "message": "Password reset is handled by Clerk. Open the Software reset page and choose forgot password.",
+        }
+    raise HTTPException(status_code=503, detail="Password reset requires Clerk Authentication.")
 
 
 @app.post("/auth/password-update")
 def auth_password_update(payload: PasswordUpdateRequest) -> Dict[str, Any]:
-    if not supabase_is_configured():
-        raise HTTPException(
-            status_code=503,
-            detail="Password reset requires Supabase Authentication.",
-        )
-    user = require_supabase_operation(
-        supabase_auth_update_password(
-            access_token=payload.access_token,
-            refresh_token=payload.refresh_token,
-            password=payload.password,
-        )
-    )
-    return {"ok": True, "user": user, "message": "Password updated."}
+    if clerk_is_configured():
+        return {
+            "ok": True,
+            "provider": "clerk",
+            "message": "Password update is handled by Clerk after the reset email flow.",
+        }
+    raise HTTPException(status_code=503, detail="Password update requires Clerk Authentication.")
 
 
 def require_supabase_operation(result: Dict[str, Any]) -> Any:
@@ -7542,6 +7586,35 @@ def sdk_track_stage(
             payload={"metadata": payload.metadata},
         )
     return {"ok": True, "event_id": event_id}
+
+
+@app.get("/api/sdk/docs")
+def api_sdk_docs() -> Dict[str, Any]:
+    return {
+        "ok": True,
+        "auth_required_for_install": False,
+        "auth_required_for_docs": False,
+        "install": {
+            "python": "pip install software-sdk",
+            "github": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
+            "local": "pip install -e .",
+        },
+        "public_local_mode": [
+            "local validation",
+            "local plan creation",
+            "dry-run examples",
+            "sandbox workflow tests",
+        ],
+        "authenticated_cloud_mode": [
+            "cloud workflow execution",
+            "saved projects",
+            "user memory",
+            "audit logs",
+            "external app integrations",
+            "team/workspace features",
+        ],
+        "optional_cloud_login": ["software login", "SOFTWARE_API_KEY=..."],
+    }
 
 
 @app.post("/api/sdk/workflows/model-call")

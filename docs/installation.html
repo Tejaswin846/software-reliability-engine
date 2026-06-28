@@ -1,9 +1,33 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Installation - Software Docs</title><link rel="stylesheet" href="/docs.css"></head><body><header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/onboarding">Onboarding</a><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header><main class="layout"><aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/authentication">Authentication</a><a href="/docs/troubleshooting">Troubleshooting</a></aside><article class="doc"><h1>Installation</h1><h2>Install the SDK</h2><pre><code>pip install software-sdk
-software login
-software init
-software test
-software status</code></pre><p>When developing from this repository:</p><pre><code>python -m pip install --upgrade pip
-pip install -e .</code></pre><h2>Run the server locally</h2><pre><code>pip install -r requirements.txt
-uvicorn app:app --host 127.0.0.1 --port 8300</code></pre><h2>Required server environment</h2><pre><code>SOFTWARE_JWT_SECRET=replace-with-a-long-random-secret
-SOFTWARE_ENABLE_BOOTSTRAP_DEV_KEY=false
-SOFTWARE_API_DB_PATH=data/software_reliability.db</code></pre><h2>Check health</h2><pre><code>curl http://127.0.0.1:8300/health</code></pre></article></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Installation - Software Docs</title>
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/onboarding">Onboarding</a><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header>
+  <main class="layout">
+    <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/authentication">Authentication</a><a href="/docs/troubleshooting">Troubleshooting</a></aside>
+    <article class="doc">
+      <h1>Installation</h1>
+      <h2>Install without login</h2>
+      <pre><code>pip install software-sdk
+npm install software-sdk</code></pre>
+      <p>The SDK install, docs, local validation, local planning, dry-run examples, and sandbox workflows are public.</p>
+      <h2>Optional cloud login</h2>
+      <pre><code>software login
+# or
+SOFTWARE_API_KEY=sw_your_key</code></pre>
+      <p>Cloud workflow execution, saved projects, user memory, audit logs, external app integrations, and team features require Clerk login or an API key.</p>
+      <h2>Develop from this repository</h2>
+      <pre><code>python -m pip install --upgrade pip
+pip install -e .</code></pre>
+      <h2>Run the server locally</h2>
+      <pre><code>pip install -r requirements.txt
+uvicorn app:app --host 127.0.0.1 --port 8300</code></pre>
+    </article>
+  </main>
+</body>
+</html>

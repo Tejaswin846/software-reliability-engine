@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: software-platform
+    name: software-reliability-engine
     env: python
     plan: free
     rootDir: .
@@ -15,14 +15,24 @@ services:
       - key: JWT_SECRET
         generateValue: true
       - key: PUBLIC_BASE_URL
-        value: https://software-platform.onrender.com
+        value: https://software-reliability-engine.onrender.com
       - key: SOFTWARE_ALLOWED_ORIGINS
-        value: https://software-platform.onrender.com
+        value: https://software-reliability-engine.onrender.com
+      - key: SOFTWARE_CLERK_AUTH_REQUIRED
+        value: "true"
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_JWT_ISSUER
+        sync: false
+      - key: CLERK_WEBHOOK_SECRET
+        sync: false
       - key: SOFTWARE_SDK_API_KEYS
         sync: false
       - key: SUPABASE_URL
         sync: false
-      - key: SUPABASE_ANON_KEY
+      - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
       - key: CLARITY_PROJECT_ID
         value: xc0zbrjy3z

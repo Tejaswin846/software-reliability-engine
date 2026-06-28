@@ -27,6 +27,15 @@ For normal SDK installation:
 
 ```bash
 pip install software-sdk
+npm install software-sdk
+```
+
+No login is required for installation, local validation, local plans, dry-run
+examples, or sandbox workflows.
+
+Optional cloud mode requires a project API key:
+
+```bash
 software login
 software init
 software test

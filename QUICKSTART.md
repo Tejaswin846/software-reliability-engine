@@ -1,28 +1,16 @@
 # Software Quick Start
 
-This guide takes a new developer from install to visible workflow telemetry in about five minutes.
-
-## 1. Install
-
-For normal SDK use:
+## 1. Install Publicly
 
 ```bash
 pip install software-sdk
-software login
-software init
-software test
-software status
+npm install software-sdk
 ```
 
-For local development from this repository:
+No sign-in is required for install, docs, local validation, local plans, dry-run
+examples, or sandbox workflow tests.
 
-```bash
-python -m pip install --upgrade pip
-pip install -e .
-software --help
-```
-
-## 2. Start Software
+## 2. Start Software Locally
 
 ```bash
 pip install -r requirements.txt
@@ -35,63 +23,19 @@ Open:
 http://127.0.0.1:8300
 ```
 
-## 3. Create Account
+## 3. Use Cloud Features When Needed
 
-Open:
+Sign in with Clerk only when you need saved projects, cloud execution, user
+memory, audit logs, integrations, API keys, or team features.
 
-```text
-http://127.0.0.1:8300/register
-```
-
-Create an account with email and password.
-
-## 4. Create Project
-
-Open:
-
-```text
-http://127.0.0.1:8300/projects
-```
-
-Create a project named:
-
-```text
-my-agent-dev
-```
-
-## 5. Generate API Key
-
-Open:
-
-```text
-http://127.0.0.1:8300/api-keys
-```
-
-Select your project and create an API key.
-
-Copy the full key immediately. Software only shows it once.
-
-## 6. Connect the SDK
-
-PowerShell:
-
-```powershell
+```bash
 software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent-dev
 software init
 software test
 software status
 ```
 
-Command Prompt:
-
-```bat
-software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent-dev
-software init
-software test
-software status
-```
-
-## 7. View Dashboard
+## 4. View Dashboard
 
 Open:
 
@@ -99,21 +43,8 @@ Open:
 http://127.0.0.1:8300/dashboard
 ```
 
-You should see your workflow in the SDK Workflows section.
-
-## Other Examples
-
-```bash
-python examples/search_agent.py
-python examples/research_agent.py
-python examples/multi_step_workflow.py
-```
-
-## Expected Output
-
-```text
-Software test workflow sent.
-```
+After sign-in, the SDK Workflows section shows your project-scoped workflow
+telemetry.
 
 ## Common Issues
 
@@ -125,6 +56,7 @@ Generate a new API key at `/api-keys` and update `SOFTWARE_API_KEY`.
 
 Confirm you are viewing the same Software URL used by `SOFTWARE_API_URL`.
 
-`Missing bearer token`
+`401 Authentication required`
 
-Login again at `/login`.
+The endpoint is a protected cloud feature. Sign in with Clerk or send a project
+API key. Local SDK use remains available without signing in.

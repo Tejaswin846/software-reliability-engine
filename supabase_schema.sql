@@ -28,6 +28,15 @@ BEGIN
 END
 $$;
 
+CREATE TABLE IF NOT EXISTS public.user_profiles (
+    id TEXT PRIMARY KEY,
+    clerk_user_id TEXT NOT NULL UNIQUE,
+    email TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata JSONB NOT NULL DEFAULT '{}'::JSONB
+);
+
 CREATE TABLE IF NOT EXISTS public.chats (
     id TEXT PRIMARY KEY,
     user_id TEXT NOT NULL,
@@ -447,6 +456,9 @@ $$;
 CREATE INDEX IF NOT EXISTS idx_chats_user_updated
     ON public.chats(user_id, updated_at DESC);
 
+CREATE INDEX IF NOT EXISTS idx_user_profiles_email
+    ON public.user_profiles(email);
+
 CREATE INDEX IF NOT EXISTS idx_chats_project_updated
     ON public.chats(project_id, updated_at DESC);
 
@@ -484,50 +496,48 @@ BEFORE UPDATE ON public.chats
 FOR EACH ROW
 EXECUTE FUNCTION public.software_set_updated_at();
 
+DROP TRIGGER IF EXISTS software_user_profiles_updated_at ON public.user_profiles;
+CREATE TRIGGER software_user_profiles_updated_at
+BEFORE UPDATE ON public.user_profiles
+FOR EACH ROW
+EXECUTE FUNCTION public.software_set_updated_at();
+
+ALTER TABLE public.user_profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.chats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.benchmark_runs ENABLE ROW LEVEL SECURITY;
 
--- Supabase creates and manages auth.users. Do not create or alter auth tables here.
---
--- The current FastAPI integration uses SUPABASE_ANON_KEY only on the server and
--- performs user ownership checks before each operation. These policies preserve
--- that behavior. For stronger database-level isolation, migrate the server to
--- SUPABASE_SERVICE_ROLE_KEY and replace these broad anon policies with
--- auth.uid()-based authenticated policies.
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.chats TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.messages TO anon;
-GRANT SELECT, INSERT, UPDATE, DELETE ON public.benchmark_runs TO anon;
+-- Clerk owns authentication. Supabase is used only as server-side storage.
+-- Store the Clerk user id in every user-owned row and use
+-- SUPABASE_SERVICE_ROLE_KEY only from the backend. Do not expose service_role
+-- credentials to browsers or SDK clients.
+REVOKE ALL ON public.user_profiles FROM anon, authenticated;
+REVOKE ALL ON public.chats FROM anon, authenticated;
+REVOKE ALL ON public.messages FROM anon, authenticated;
+REVOKE ALL ON public.benchmark_runs FROM anon, authenticated;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.user_profiles TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.chats TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.messages TO service_role;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.benchmark_runs TO service_role;
+
+DROP POLICY IF EXISTS "software_server_user_profiles" ON public.user_profiles;
 
 DROP POLICY IF EXISTS "software_server_chats" ON public.chats;
-CREATE POLICY "software_server_chats"
-    ON public.chats
-    FOR ALL
-    TO anon
-    USING (TRUE)
-    WITH CHECK (TRUE);
-
 DROP POLICY IF EXISTS "software_server_messages" ON public.messages;
-CREATE POLICY "software_server_messages"
-    ON public.messages
-    FOR ALL
-    TO anon
-    USING (TRUE)
-    WITH CHECK (TRUE);
-
 DROP POLICY IF EXISTS "software_server_benchmark_runs" ON public.benchmark_runs;
-CREATE POLICY "software_server_benchmark_runs"
-    ON public.benchmark_runs
-    FOR ALL
-    TO anon
-    USING (TRUE)
-    WITH CHECK (TRUE);
 
 COMMIT;
 
 -- Verification 1: this query should return zero rows.
 WITH expected_columns(table_name, column_name) AS (
     VALUES
+        ('user_profiles', 'id'),
+        ('user_profiles', 'clerk_user_id'),
+        ('user_profiles', 'email'),
+        ('user_profiles', 'created_at'),
+        ('user_profiles', 'updated_at'),
+        ('user_profiles', 'metadata'),
         ('chats', 'id'),
         ('chats', 'user_id'),
         ('chats', 'project_id'),
@@ -585,6 +595,9 @@ WHERE table_schema = 'public'
       (table_name = 'chats'
        AND column_name IN ('id', 'user_id', 'title', 'created_at', 'updated_at', 'metadata'))
       OR
+      (table_name = 'user_profiles'
+       AND column_name IN ('id', 'clerk_user_id', 'email', 'created_at', 'updated_at', 'metadata'))
+      OR
       (table_name = 'messages'
        AND column_name IN ('id', 'chat_id', 'user_id', 'role', 'content', 'created_at', 'metadata'))
       OR
@@ -599,8 +612,8 @@ WHERE table_schema = 'public'
   )
 ORDER BY table_name, column_name;
 
--- Verification 3: Supabase Authentication owns this table. It should be present.
-SELECT TO_REGCLASS('auth.users') AS supabase_auth_users;
+-- Verification 3: Clerk profile storage exists.
+SELECT TO_REGCLASS('public.user_profiles') AS software_user_profiles;
 
 -- Verification 4: confirm RLS and policies.
 SELECT namespace.nspname AS schema_name,
@@ -610,13 +623,13 @@ FROM pg_class AS relation
 JOIN pg_namespace AS namespace
   ON namespace.oid = relation.relnamespace
 WHERE namespace.nspname = 'public'
-  AND relation.relname IN ('chats', 'messages', 'benchmark_runs')
+  AND relation.relname IN ('user_profiles', 'chats', 'messages', 'benchmark_runs')
 ORDER BY relation.relname;
 
 SELECT schemaname, tablename, policyname, roles, cmd
 FROM pg_policies
 WHERE schemaname = 'public'
-  AND tablename IN ('chats', 'messages', 'benchmark_runs')
+  AND tablename IN ('user_profiles', 'chats', 'messages', 'benchmark_runs')
 ORDER BY tablename, policyname;
 
 -- Verification 5: confirm the updated_at trigger.
@@ -627,4 +640,4 @@ SELECT event_object_schema,
        event_manipulation
 FROM information_schema.triggers
 WHERE event_object_schema = 'public'
-  AND trigger_name = 'software_chats_updated_at';
+  AND trigger_name IN ('software_chats_updated_at', 'software_user_profiles_updated_at');

@@ -377,7 +377,22 @@ async function loadInstallProjects() {
   if (!select) {
     return;
   }
-  const response = await api("/api/projects");
+  let response;
+  try {
+    response = await api("/api/projects");
+  } catch (error) {
+    if (error.status === 401) {
+      select.innerHTML = `<option value="">Sign in to select a project</option>`;
+      const projectNameLabel = document.getElementById("install-project-name-label");
+      if (projectNameLabel) {
+        projectNameLabel.textContent = "Sign in for cloud setup";
+      }
+      updateInstallCommands();
+      showMessage("install-message", "SDK install commands are public. Sign in only to generate API keys or test cloud ingestion.", "success");
+      return;
+    }
+    throw error;
+  }
   select.innerHTML = response.projects.length
     ? response.projects.map((project) => (
       `<option value="${escapeHtml(project.id)}" data-project-name="${escapeHtml(project.name)}">${escapeHtml(project.name)}</option>`
@@ -521,6 +536,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   initPasswordResetRequest();
   initPasswordUpdate();
   wireLogout();
+  initInstallPage();
   if (document.body.dataset.requiresAuth === "true") {
     const user = await requireSession();
     if (!user) {
@@ -528,7 +544,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
     initProjects();
     initApiKeys();
-    initInstallPage();
     await loadProjects();
   }
 });

@@ -138,8 +138,8 @@ These commands are now used by the installer scripts and displayed on the instal
 - `app.py` exposes `/install`
 - `/health` includes installer assets in startup checks
 - installer downloads are served by FastAPI
-- install page requires login
-- install page loads projects
+- install page is public
+- install page loads projects after optional sign-in
 - install page can generate a new API key
 - install page can test an SDK workflow
 - dashboard links to install page

@@ -65,56 +65,6 @@ class FakeClient:
         return FakeQuery(name, self.store, self.rows)
 
 
-class FakeAuthUser:
-    id = "supabase-user"
-    email = "person@example.com"
-    created_at = "2026-06-24T00:00:00+00:00"
-    user_metadata = {"name": "Person"}
-
-
-class FakeAuthSession:
-    access_token = "access-token"
-    refresh_token = "refresh-token"
-    expires_at = 123456
-    expires_in = 3600
-    token_type = "bearer"
-
-
-class FakeAuthResponse:
-    user = FakeAuthUser()
-    session = FakeAuthSession()
-
-
-class FakeAuth:
-    def __init__(self):
-        self.reset = None
-        self.updated = None
-
-    def sign_up(self, _credentials):
-        return FakeAuthResponse()
-
-    def sign_in_with_password(self, _credentials):
-        return FakeAuthResponse()
-
-    def get_user(self, _token):
-        return FakeAuthResponse()
-
-    def reset_password_email(self, email, options):
-        self.reset = (email, options)
-
-    def set_session(self, _access_token, _refresh_token):
-        return None
-
-    def update_user(self, payload):
-        self.updated = payload
-        return FakeAuthResponse()
-
-
-class FakeAuthClient:
-    def __init__(self):
-        self.auth = FakeAuth()
-
-
 class SupabaseClientTests(unittest.TestCase):
     def tearDown(self):
         supabase_client.reset_supabase_client()
@@ -182,39 +132,29 @@ class SupabaseClientTests(unittest.TestCase):
         self.assertEqual(result["data"]["chat"]["title"], "Saved")
         self.assertEqual(result["data"]["messages"][0]["content"], "Previous message")
 
-    def test_supabase_auth_helpers_normalize_user_and_session(self):
-        fake = FakeAuthClient()
-        with patch.object(supabase_client, "_new_client", return_value=fake):
-            signup = supabase_client.auth_sign_up(
+    def test_upsert_user_profile_uses_clerk_user_id(self):
+        fake = FakeClient()
+        with patch.object(supabase_client, "get_supabase_client", return_value=fake):
+            result = supabase_client.upsert_user_profile(
+                user_id="user_clerk",
                 email="person@example.com",
-                password="Password123!",
+                metadata={"provider": "clerk"},
             )
-            login = supabase_client.auth_sign_in(
-                email="person@example.com",
-                password="Password123!",
-            )
-            current = supabase_client.auth_get_user("access-token")
-        self.assertTrue(signup["ok"])
-        self.assertEqual(signup["data"]["user"]["id"], "supabase-user")
-        self.assertEqual(login["data"]["session"]["access_token"], "access-token")
-        self.assertEqual(current["data"]["email"], "person@example.com")
 
-    def test_password_reset_and_update_use_supabase_auth(self):
-        fake = FakeAuthClient()
-        with patch.object(supabase_client, "_new_client", return_value=fake):
-            reset = supabase_client.auth_request_password_reset(
-                email="person@example.com",
-                redirect_to="https://software.example/reset-password",
-            )
-            update = supabase_client.auth_update_password(
-                access_token="access-token",
-                refresh_token="refresh-token",
-                password="NewPassword123!",
-            )
-        self.assertTrue(reset["ok"])
-        self.assertEqual(fake.auth.reset[0], "person@example.com")
-        self.assertTrue(update["ok"])
-        self.assertEqual(fake.auth.updated["password"], "NewPassword123!")
+        self.assertTrue(result["ok"])
+        self.assertEqual(fake.store["on_conflict"], "id")
+        self.assertEqual(fake.store["user_profiles"]["id"], "user_clerk")
+        self.assertEqual(fake.store["user_profiles"]["clerk_user_id"], "user_clerk")
+
+    def test_supabase_auth_helpers_are_not_exposed(self):
+        for name in [
+            "auth_sign_up",
+            "auth_sign_in",
+            "auth_get_user",
+            "auth_request_password_reset",
+            "auth_update_password",
+        ]:
+            self.assertFalse(hasattr(supabase_client, name), f"{name} should be handled by Clerk")
 
 
 if __name__ == "__main__":

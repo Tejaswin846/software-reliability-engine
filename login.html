@@ -10,6 +10,7 @@
     <header class="topbar">
       <p class="brand"><span>Software</span><strong>Login</strong></p>
       <nav class="nav">
+        <a href="/install">Install SDK</a>
         <a href="/register">Create account</a>
         <a href="/dashboard">Dashboard</a>
       </nav>
@@ -17,14 +18,11 @@
     <main class="shell">
       <section class="panel stack">
         <h1>Welcome back</h1>
-        <p class="muted">Sign in to manage projects, API keys, and agent telemetry.</p>
-        <form id="login-form" class="stack">
-          <label>Email <input name="email" type="email" autocomplete="email" required></label>
-          <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-          <button type="submit">Login</button>
-        </form>
-        <a href="/forgot-password">Forgot your password?</a>
-        <div id="login-message" class="message"></div>
+        <p class="muted">Sign in with Clerk to manage projects, API keys, cloud workflows, and integrations.</p>
+        <button type="button" data-clerk-sign-in>Sign in with Clerk</button>
+        <button type="button" class="secondary" data-clerk-reset>Reset password</button>
+        <a href="/install">Install the SDK without signing in</a>
+        <div id="login-message" data-auth-message class="message"></div>
       </section>
     </main>
     <script src="/auth.js"></script>

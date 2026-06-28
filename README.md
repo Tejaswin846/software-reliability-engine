@@ -19,7 +19,7 @@ Software includes:
 
 - FastAPI backend
 - SQLite database
-- multi-user accounts
+- Clerk-authenticated multi-user accounts
 - projects
 - hashed API keys
 - usage plans
@@ -30,6 +30,26 @@ Software includes:
 - developer documentation
 - runnable examples
 - production error, log, and performance monitoring with Sentry
+
+## Authentication
+
+Software uses Clerk for sign-up, login, logout, password reset, email
+verification, Google OAuth, GitHub OAuth, and session/JWT validation. Supabase
+is not used for authentication; it remains a database/storage layer only.
+
+Required production environment:
+
+```text
+CLERK_SECRET_KEY=sk_live_...
+CLERK_PUBLISHABLE_KEY=pk_live_...
+CLERK_JWT_ISSUER=https://your-clerk-instance.clerk.accounts.dev
+CLERK_WEBHOOK_SECRET=whsec_...
+SOFTWARE_CLERK_AUTH_REQUIRED=true
+```
+
+Protected cloud features use the Clerk user id (`sub`) as `user_id` for
+projects, workflows, memory, audit logs, API keys, settings, and Supabase
+profile rows.
 
 ## Sentry Monitoring
 
@@ -211,11 +231,18 @@ Software gives developers the reliability layer around those agents.
 
 ## Quick Start
 
-Install the SDK:
+Install the SDK without signing in:
 
 ```bash
 pip install software-sdk
+```
+
+Optional cloud login is only needed for protected cloud features:
+
+```bash
 software login
+# or
+SOFTWARE_API_KEY=sw_your_key
 software init
 software test
 software status
@@ -243,11 +270,11 @@ http://127.0.0.1:8300
 
 Then:
 
-1. Create an account at `/register`
-2. Create a project at `/projects`
-3. Generate an API key at `/api-keys`
-4. Install the SDK with `pip install software-sdk`
-5. Run `software login`
+1. Install the SDK with `pip install software-sdk`
+2. Use local validation, local plans, dry-run examples, and sandbox workflows without signing in
+3. Create an account at `/register` only when you need cloud features
+4. Create a project at `/projects`
+5. Generate an API key at `/api-keys`
 6. Run `software init`
 7. Run `software test`
 8. Open `/dashboard`
@@ -291,8 +318,8 @@ with monitor.track_workflow("research-task") as workflow:
 /install           One-click SDK installer page
 /apps              Connect and manage external applications
 /benchmarks        Benchmark runner and sample data generator
-/register          Create account
-/login             Login
+/register          Create account with Clerk
+/login             Login with Clerk
 /projects          Manage projects
 /api-keys          Manage API keys
 /pricing           Usage plans
@@ -431,14 +458,15 @@ POST /api/sdk/workflows/complete
 
 ## Supabase Persistence
 
-Software can mirror benchmark runs and persist authenticated chat history in
-Supabase. Configure `SUPABASE_URL` and `SUPABASE_ANON_KEY`, then run
+Software can mirror benchmark runs, store Clerk user profiles, and persist
+authenticated chat history in Supabase. Configure `SUPABASE_URL` and
+server-only `SUPABASE_SERVICE_ROLE_KEY`, then run
 [`supabase_schema.sql`](supabase_schema.sql) in the Supabase SQL editor.
 
 Setup and API details are in [`SUPABASE_SETUP.md`](SUPABASE_SETUP.md).
-Supabase Authentication provides sign-up, login, logout, password reset,
-persistent browser sessions, protected dashboard pages, and user-scoped
-benchmark history.
+Clerk provides sign-up, login, logout, password reset, email verification,
+OAuth, persistent browser sessions, protected dashboard pages, and user-scoped
+cloud API access.
 
 Microsoft Clarity analytics is loaded globally when `CLARITY_PROJECT_ID` is
 set. It tracks dashboard visits, benchmark runner visits, install clicks, and
@@ -463,6 +491,12 @@ SOFTWARE_JWT_SECRET=replace-with-a-long-random-secret
 SOFTWARE_ENABLE_BOOTSTRAP_DEV_KEY=false
 SOFTWARE_API_DB_PATH=/app/Software/data/software_reliability.db
 RELIABILITY_DB_PATH=/app/Software/data/reliability.db
+CLERK_SECRET_KEY=replace-with-your-clerk-secret-key
+CLERK_PUBLISHABLE_KEY=replace-with-your-clerk-publishable-key
+CLERK_JWT_ISSUER=https://your-clerk-instance.clerk.accounts.dev
+CLERK_WEBHOOK_SECRET=replace-with-your-clerk-webhook-secret
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=replace-with-your-server-only-service-role-key
 ```
 
 See [deployment.md](deployment.md) for deployment details.

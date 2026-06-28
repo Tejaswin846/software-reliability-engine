@@ -1,8 +1,8 @@
 # Supabase Setup
 
-Software uses Supabase as optional remote persistence for chats, messages, and
-benchmark run mirrors. SQLite remains active for the existing reliability
-dashboard and APIs.
+Software uses Supabase as optional remote persistence for Clerk user profiles,
+chats, messages, and benchmark run mirrors. Clerk owns authentication. SQLite
+remains active for the existing reliability dashboard and APIs.
 
 ## Configure
 
@@ -12,23 +12,16 @@ dashboard and APIs.
    `benchmark_runs` already exist. It creates missing tables and indexes, adds
    missing columns, restores constraints where possible, enables RLS, recreates
    the required policies, and installs the `chats.updated_at` trigger.
-3. In Supabase Authentication URL Configuration, add:
-
-```text
-https://YOUR_SOFTWARE_DOMAIN/login
-https://YOUR_SOFTWARE_DOMAIN/reset-password
-```
-
-4. Enable Email authentication in Supabase.
-5. Set these server environment variables:
+3. Set these server-only environment variables:
 
 ```text
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
 Do not commit a real key. On Render, add both values under the Web Service
-environment settings.
+environment settings. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to browser
+JavaScript, SDK clients, or public docs.
 
 ## Verify
 
@@ -44,7 +37,7 @@ dashboard APIs continue using SQLite. Benchmark responses include a
 
 ## Chat APIs
 
-These routes use the existing Software JWT authentication:
+These routes require a Clerk-authenticated Software user:
 
 ```text
 POST /api/chats
@@ -58,42 +51,24 @@ ordered message history.
 
 ## Authentication
 
-When Supabase is configured, these routes use Supabase Authentication:
-
-```text
-POST /auth/register
-POST /auth/login
-POST /auth/logout
-GET  /auth/me
-POST /auth/password-reset
-POST /auth/password-update
-```
-
-Software sets an HttpOnly application session cookie after Supabase verifies the
-credentials. This keeps the session across browser refreshes and protects
-`/dashboard`, `/benchmarks`, `/failures`, `/install`, `/projects`, and
-`/api-keys`.
-
-If Supabase is not configured, local development continues to use the existing
-SQLite authentication flow. Password reset requires Supabase.
+Clerk handles sign-up, login, logout, password reset, email verification,
+Google OAuth, GitHub OAuth, and session/JWT validation. Software stores the
+Clerk `sub` as the user id in SQLite and Supabase `user_profiles`, then uses
+that same id on chats, messages, benchmark mirrors, projects, workflows, memory,
+audit logs, API keys, and settings.
 
 ## Schema Verification
 
 The final queries in `supabase_schema.sql` verify:
 
 - every required Software column exists,
-- the Supabase-managed `auth.users` table exists,
-- RLS is enabled on all three Software tables,
+- the `public.user_profiles` table exists,
+- RLS is enabled on all Software storage tables,
 - the expected policies exist,
-- the `software_chats_updated_at` trigger exists.
+- the Software updated-at triggers exist.
 
 The missing-column query should return zero rows.
 
-Do not create custom copies of `auth.users`, sessions, refresh tokens, or other
-Supabase Authentication tables. Supabase owns and migrates the `auth` schema.
-
-The current FastAPI integration uses `SUPABASE_ANON_KEY` from the server and
-performs ownership checks in the API, so the migration preserves its existing
-anon policies. For stronger database-level isolation, switch the trusted server
-client to a Supabase secret/service-role key, keep that key server-only, and
-replace the broad anon policies with authenticated `auth.uid()` policies.
+Do not use Supabase Auth for Software account flows. The
+server uses `SUPABASE_SERVICE_ROLE_KEY` only for storage writes and enforces
+Clerk user ownership in the API before reading or writing user-scoped rows.

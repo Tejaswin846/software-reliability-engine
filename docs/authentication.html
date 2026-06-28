@@ -1,3 +1,28 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Authentication - Software Docs</title><link rel="stylesheet" href="/docs.css"></head><body><header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/login">Login</a><a href="/register">Register</a></nav></header><main class="layout"><aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/projects">Projects</a><a href="/docs/api-keys">API Keys</a></aside><article class="doc"><h1>Authentication</h1><p>Software uses bcrypt for password hashing and JWT bearer tokens for authenticated dashboard and management requests.</p><h2>Register</h2><pre><code>POST /auth/register
-{"email":"dev@example.com","password":"strong-password"}</code></pre><h2>Login</h2><pre><code>POST /auth/login
-{"email":"dev@example.com","password":"strong-password"}</code></pre><h2>Use JWT</h2><pre><code>Authorization: Bearer YOUR_JWT</code></pre><h2>Current user</h2><pre><code>GET /auth/me</code></pre><p>JWTs expire according to <code>SOFTWARE_JWT_EXPIRE_MINUTES</code>.</p></article></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authentication - Software Docs</title>
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/login">Login</a><a href="/register">Register</a></nav></header>
+  <main class="layout">
+    <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/projects">Projects</a><a href="/docs/api-keys">API Keys</a></aside>
+    <article class="doc">
+      <h1>Authentication</h1>
+      <p>Software uses Clerk for sign-up, login, logout, password reset, email verification, Google OAuth, GitHub OAuth, and JWT/session validation.</p>
+      <h2>Public SDK install</h2>
+      <pre><code>pip install software-sdk
+npm install software-sdk</code></pre>
+      <p>Installation, docs, examples, local validation, local plans, and dry-run sandbox workflows do not require login.</p>
+      <h2>Protected cloud APIs</h2>
+      <p>Projects, workflows, memory, audit logs, API keys, cloud execution, Composio connections, and team features require a Clerk session or project API key.</p>
+      <h2>Current user</h2>
+      <pre><code>GET /auth/me
+Authorization: Bearer CLERK_SESSION_JWT</code></pre>
+    </article>
+  </main>
+</body>
+</html>

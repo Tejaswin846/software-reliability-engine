@@ -19,6 +19,13 @@ SOFTWARE_ALLOWED_ORIGINS=https://software-reliability-engine.onrender.com
 SOFTWARE_SDK_API_KEYS=sw_replace_with_initial_render_sdk_key
 SOFTWARE_ENABLE_BOOTSTRAP_DEV_KEY=true
 
+# Clerk owns sign-up, login, reset password, OAuth, and session/JWT validation.
+CLERK_SECRET_KEY=replace-with-your-clerk-secret-key
+CLERK_PUBLISHABLE_KEY=replace-with-your-clerk-publishable-key
+CLERK_JWT_ISSUER=https://your-clerk-instance.clerk.accounts.dev
+CLERK_WEBHOOK_SECRET=replace-with-your-clerk-webhook-secret
+SOFTWARE_CLERK_AUTH_REQUIRED=true
+
 # SQLite paths. Use these with the Render persistent disk mounted at /var/data.
 SOFTWARE_API_DB_PATH=/var/data/software_reliability.db
 RELIABILITY_DB_PATH=/var/data/reliability.db
@@ -39,10 +46,10 @@ SOFTWARE_REDIRECT_HOSTS=
 SOFTWARE_FORCE_HTTPS=true
 SOFTWARE_REDIRECT_WWW=true
 
-# Optional Supabase persistence for chats, messages, and benchmark mirrors.
+# Optional Supabase storage for Clerk profiles, chats, messages, and benchmark mirrors.
 # Run supabase_schema.sql in the Supabase SQL editor before setting these.
 SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=replace-with-your-supabase-anon-key
+SUPABASE_SERVICE_ROLE_KEY=replace-with-your-server-only-supabase-service-role-key
 
 # Microsoft Clarity browser analytics.
 CLARITY_PROJECT_ID=xc0zbrjy3z

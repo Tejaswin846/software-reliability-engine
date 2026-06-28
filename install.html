@@ -6,7 +6,7 @@
     <title>Install Software SDK</title>
     <link rel="stylesheet" href="/saas.css">
   </head>
-  <body data-requires-auth="true">
+  <body>
     <header class="topbar">
       <div class="brand">
         <span>Software</span>
@@ -16,6 +16,7 @@
         <a href="/dashboard">Dashboard</a>
         <a href="/projects">Projects</a>
         <a href="/api-keys">API Keys</a>
+        <button type="button" class="secondary" data-clerk-sign-in>Sign in</button>
         <span id="user-label" class="muted"></span>
         <button id="logout-button" type="button" class="secondary">Logout</button>
       </nav>
@@ -26,9 +27,9 @@
         <div class="row">
           <div>
             <h1>Install the Software SDK</h1>
-            <p class="muted">Connect an AI-agent project to the reliability dashboard with a generated API key and one installer script.</p>
+            <p class="muted">Install docs, commands, examples, and downloads are public. Sign in only when you need protected cloud features like API keys, saved projects, audit logs, or integrations.</p>
           </div>
-          <a class="button secondary" href="/dashboard">View Dashboard</a>
+          <a class="button secondary" href="/dashboard">Open Dashboard</a>
         </div>
         <div id="install-message" class="message"></div>
       </section>
@@ -37,7 +38,7 @@
         <div class="row">
           <div>
             <h2>Project Connection</h2>
-            <p class="muted">Choose a project, generate or paste an API key, then test the SDK connection.</p>
+            <p class="muted">Optional cloud setup. Sign in to choose a project, generate an API key, and test cloud workflow ingestion.</p>
           </div>
           <button id="test-install-connection" type="button">Test Connection</button>
         </div>
