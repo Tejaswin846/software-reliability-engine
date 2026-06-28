@@ -10,132 +10,72 @@
     <header class="topbar">
       <a class="brand" href="/"><span class="brand-mark">S</span><strong>Software+</strong></a>
       <nav class="nav">
+        <a href="/developer-docs">Docs</a>
         <a href="/dashboard">Dashboard</a>
-        <a href="/projects">Projects</a>
-        <a href="/api-keys">API Keys</a>
-        <button type="button" class="secondary" data-clerk-sign-in>Sign in</button>
+        <button type="button" class="secondary" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/install">Sign in</button>
         <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Account</button>
-        <span id="user-label" class="muted"></span>
-        <button id="logout-button" type="button" class="secondary">Logout</button>
+        <button type="button" class="secondary" data-clerk-sign-out data-auth-signed-in>Logout</button>
       </nav>
     </header>
 
-    <main id="install-sdk-page" class="shell stack">
-      <section class="panel stack">
-        <div class="row">
-          <div>
-            <h1>Install the Software SDK</h1>
-            <p class="muted">Install docs, commands, examples, and downloads are public. Sign in only when you need protected cloud features like API keys, saved projects, audit logs, or integrations.</p>
-          </div>
-          <a class="button secondary" href="/dashboard">Open Dashboard</a>
+    <main id="install-sdk-page" class="auth-shell simple-install">
+      <section class="auth-copy">
+        <p class="eyebrow">Install first</p>
+        <h1>Install the SDK, then add your <span class="accent-text">API key</span></h1>
+        <p class="muted">No account is needed to install. Sign in only after install when you want cloud workflow tracking.</p>
+        <div class="auth-preview">
+          <div class="auth-preview-row"><span>01</span><strong>Click install</strong><span class="muted">public</span></div>
+          <div class="auth-preview-row"><span>02</span><strong>Sign in</strong><span class="muted">Clerk</span></div>
+          <div class="auth-preview-row"><span>03</span><strong>Copy API key</strong><span class="muted">paste once</span></div>
         </div>
+      </section>
+
+      <section class="auth-card stack">
+        <div>
+          <p class="eyebrow">Step 1</p>
+          <h2>Install Software</h2>
+          <p class="muted">Run one command in your terminal.</p>
+        </div>
+        <pre id="install-command-main" class="code-snippet">pip install software-sdk</pre>
+        <div class="button-row">
+          <button id="copy-simple-install" type="button" data-copy-target="install-command-main">Copy install command</button>
+          <a class="button secondary" href="/install_software_sdk.ps1" download>Download installer</a>
+        </div>
+        <details>
+          <summary>npm instead</summary>
+          <pre id="install-command-npm" class="code-snippet">npm install software-sdk</pre>
+          <button type="button" class="secondary" data-copy-target="install-command-npm">Copy npm command</button>
+        </details>
+
+        <div class="simple-divider"></div>
+
+        <div>
+          <p class="eyebrow">Step 2</p>
+          <h2>Get your API key</h2>
+          <p class="muted">After signing in, click once. Software creates a project and shows a key to paste into your app.</p>
+        </div>
+        <div class="button-row" data-auth-signed-out>
+          <button type="button" data-clerk-sign-in data-auth-redirect="/install">Sign in to get API key</button>
+        </div>
+        <div class="stack" data-auth-signed-in>
+          <label>
+            Project name
+            <input id="simple-project-name" type="text" value="my-agent" autocomplete="off">
+          </label>
+          <button id="simple-api-key-button" type="button">Show my API key</button>
+        </div>
+
+        <section id="simple-api-key-result" class="simple-result stack" hidden>
+          <p class="muted">Copy this now. For security, full API keys are shown once.</p>
+          <pre id="simple-api-key" class="code-snippet"></pre>
+          <button type="button" class="secondary" data-copy-target="simple-api-key">Copy API key</button>
+          <h3>Paste-ready command</h3>
+          <pre id="simple-login-command" class="code-snippet"></pre>
+          <button type="button" class="secondary" data-copy-target="simple-login-command">Copy setup command</button>
+          <p class="muted">Then run <code>software test</code> and open the dashboard.</p>
+        </section>
+
         <div id="install-message" class="message"></div>
-      </section>
-
-      <section class="panel stack">
-        <div class="row">
-          <div>
-            <h2>Project Connection</h2>
-            <p class="muted">Optional cloud setup. Sign in to choose a project, generate an API key, and test cloud workflow ingestion.</p>
-          </div>
-          <button id="test-install-connection" type="button">Test Connection</button>
-        </div>
-
-        <div class="install-grid">
-          <label>
-            User project name
-            <select id="install-project-select"></select>
-          </label>
-          <label>
-            Project name used by SDK
-            <input id="install-project-name" type="text" placeholder="my-agent">
-          </label>
-          <label>
-            API URL
-            <input id="install-api-url" type="url" placeholder="https://software-platform.onrender.com">
-          </label>
-          <label>
-            API key
-            <input id="install-api-key" type="text" placeholder="Generate or paste sw_...">
-          </label>
-        </div>
-
-        <div class="button-row">
-          <button id="generate-install-api-key" type="button" class="secondary">Generate API Key</button>
-          <a class="button secondary" href="/api-keys">Manage API Keys</a>
-        </div>
-
-        <div class="card">
-          <h2>SDK installation status</h2>
-          <p id="install-status" class="muted">Not tested yet. Browser pages cannot silently install software; use the installer script or copy a command, then run Test Connection.</p>
-          <p class="muted">Selected project: <strong id="install-project-name-label">--</strong></p>
-        </div>
-      </section>
-
-      <section class="panel stack">
-        <h2>Install Commands</h2>
-        <div class="install-command-list">
-          <article class="card stack">
-            <div class="row">
-              <h2>PyPI future</h2>
-              <button type="button" class="secondary" data-copy-target="install-command-pypi">Copy pip install command</button>
-            </div>
-            <pre id="install-command-pypi" class="code-snippet">pip install software-sdk</pre>
-          </article>
-
-          <article class="card stack">
-            <div class="row">
-              <h2>Current GitHub install</h2>
-              <button type="button" class="secondary" data-copy-target="install-command-github">Copy GitHub install command</button>
-            </div>
-            <pre id="install-command-github" class="code-snippet">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
-          </article>
-
-          <article class="card stack">
-            <div class="row">
-              <h2>npm install</h2>
-              <button type="button" class="secondary" data-copy-target="install-command-npm">Copy npm install command</button>
-            </div>
-            <pre id="install-command-npm" class="code-snippet">npm install software-sdk</pre>
-          </article>
-
-          <article class="card stack">
-            <div class="row">
-              <h2>Local/dev install</h2>
-              <button type="button" class="secondary" data-copy-target="install-command-local">Copy local install command</button>
-            </div>
-            <pre id="install-command-local" class="code-snippet">pip install -e .</pre>
-          </article>
-
-          <article class="card stack">
-            <div class="row">
-              <h2>Full setup commands</h2>
-              <button type="button" class="secondary" data-copy-target="install-command-setup">Copy setup commands</button>
-            </div>
-            <pre id="install-command-setup" class="code-snippet"></pre>
-          </article>
-        </div>
-      </section>
-
-      <section class="panel stack">
-        <h2>Download Installers</h2>
-        <p class="muted">Download a script, inspect it, then run it locally. The browser will not install anything silently.</p>
-        <div class="button-row">
-          <a class="button" href="/install_software_sdk.bat" download>Download Windows installer</a>
-          <a class="button secondary" href="/install_software_sdk.ps1" download>Download setup script</a>
-        </div>
-      </section>
-
-      <section class="panel stack">
-        <h2>Step-by-step setup</h2>
-        <div class="install-steps">
-          <article class="card"><h2>1. Create project</h2><p class="muted">Create or select the project that should receive workflow telemetry.</p></article>
-          <article class="card"><h2>2. Generate API key</h2><p class="muted">Generate a key here or on the API Keys page. Full keys are only shown once.</p></article>
-          <article class="card"><h2>3. Install SDK</h2><p class="muted">Use pip or npm without signing in.</p></article>
-          <article class="card"><h2>4. Optional cloud login</h2><p class="muted">Save API URL and API key only when you need protected cloud features.</p></article>
-          <article class="card"><h2>5. Run software test</h2><p class="muted">Send a real test workflow through the SDK ingestion API.</p></article>
-          <article class="card"><h2>6. View dashboard</h2><p class="muted">Open the SDK Workflows panel and confirm the test workflow appears.</p></article>
-        </div>
       </section>
     </main>
 

@@ -417,37 +417,6 @@ function initInstallPage() {
     return;
   }
 
-  const apiUrlInput = document.getElementById("install-api-url");
-  const apiKeyInput = document.getElementById("install-api-key");
-  const projectNameInput = document.getElementById("install-project-name");
-  const projectSelect = document.getElementById("install-project-select");
-  if (apiUrlInput) {
-    apiUrlInput.value = window.location.origin;
-  }
-  const savedKey = sessionStorage.getItem("software_install_api_key");
-  if (apiKeyInput && savedKey) {
-    apiKeyInput.value = savedKey;
-  }
-
-  [apiUrlInput, apiKeyInput, projectNameInput].forEach((input) => {
-    if (input) {
-      input.addEventListener("input", updateInstallCommands);
-    }
-  });
-  if (projectSelect) {
-    projectSelect.addEventListener("change", () => {
-      const selected = selectedInstallProject();
-      const label = document.getElementById("install-project-name-label");
-      if (projectNameInput && selected) {
-        projectNameInput.value = selected.name;
-      }
-      if (label) {
-        label.textContent = selected ? selected.name : "No project selected";
-      }
-      updateInstallCommands();
-    });
-  }
-
   document.addEventListener("click", async (event) => {
     const copyButton = event.target.closest("[data-copy-target]");
     if (copyButton) {
@@ -455,78 +424,38 @@ function initInstallPage() {
       return;
     }
 
-    const generateButton = event.target.closest("#generate-install-api-key");
+    const generateButton = event.target.closest("#simple-api-key-button");
     if (generateButton) {
-      const project = selectedInstallProject();
-      if (!project) {
-        showMessage("install-message", "Create a project before generating an API key.", "error");
-        return;
-      }
+      const projectName = document.getElementById("simple-project-name")?.value.trim() || "my-agent";
       try {
         generateButton.disabled = true;
-        const response = await api(`/api/projects/${project.id}/api-keys`, {
+        generateButton.textContent = "Creating key...";
+        const response = await api("/api/install/api-key", {
           method: "POST",
-          body: "{}",
+          body: JSON.stringify({ project_name: projectName }),
         });
-        apiKeyInput.value = response.api_key;
         sessionStorage.setItem("software_install_api_key", response.api_key);
-        updateInstallCommands();
-        showMessage("install-message", "API key generated. Copy or use it now; it is only shown once.", "success");
+        const result = document.getElementById("simple-api-key-result");
+        const apiKey = document.getElementById("simple-api-key");
+        const loginCommand = document.getElementById("simple-login-command");
+        if (apiKey) {
+          apiKey.textContent = response.api_key;
+        }
+        if (loginCommand) {
+          loginCommand.textContent = response.commands?.login || "";
+        }
+        if (result) {
+          result.hidden = false;
+          result.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
+        showMessage("install-message", "API key ready. Copy it now and paste it into your app or CLI.", "success");
       } catch (error) {
         showMessage("install-message", error.message, "error");
       } finally {
         generateButton.disabled = false;
-      }
-      return;
-    }
-
-    const testButton = event.target.closest("#test-install-connection");
-    if (testButton) {
-      const apiUrl = (apiUrlInput?.value || window.location.origin).replace(/\/+$/, "");
-      const apiKey = apiKeyInput?.value.trim();
-      const projectName = projectNameInput?.value.trim() || selectedInstallProject()?.name || "my-agent";
-      if (!apiKey) {
-        showMessage("install-message", "Enter or generate an API key before testing.", "error");
-        return;
-      }
-      try {
-        testButton.disabled = true;
-        const response = await fetch(`${apiUrl}/api/sdk/test-workflow`, {
-          method: "POST",
-          headers: {
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "X-Software-API-Key": apiKey,
-          },
-          body: JSON.stringify({
-            project_name: projectName,
-            workflow_name: "install-page-test",
-            metadata: { source: "install_page_button" },
-          }),
-        });
-        const body = await response.json().catch(() => ({}));
-        if (!response.ok || body.ok === false) {
-          throw new Error(body.detail || body.message || `SDK test returned ${response.status}`);
-        }
-        const status = document.getElementById("install-status");
-        if (status) {
-          status.textContent = `Connected. Test workflow ${body.workflow_id} recorded.`;
-        }
-        showMessage("install-message", "Connection test passed. Open the dashboard to view the workflow.", "success");
-      } catch (error) {
-        const status = document.getElementById("install-status");
-        if (status) {
-          status.textContent = "Connection test failed.";
-        }
-        showMessage("install-message", error.message, "error");
-      } finally {
-        testButton.disabled = false;
+        generateButton.textContent = "Show my API key";
       }
     }
-  });
-
-  loadInstallProjects().catch((error) => {
-    showMessage("install-message", error.message, "error");
   });
 }
 

@@ -1780,6 +1780,10 @@ class ProjectCreate(BaseModel):
     organization_id: Optional[str] = Field(None, max_length=180)
 
 
+class InstallApiKeyCreate(BaseModel):
+    project_name: str = Field("my-agent", min_length=1, max_length=160)
+
+
 class OrganizationCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=160)
 
@@ -6917,6 +6921,113 @@ def admin_customer_validation(_: Dict[str, Any] = Depends(require_admin_user)) -
     with connect() as db:
         summary = customer_validation_summary(db)
     return {"ok": True, "customer_validation": summary}
+
+
+@app.post("/api/install/api-key")
+def create_install_api_key(
+    payload: InstallApiKeyCreate,
+    request: Request,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    init_db()
+    project_name = payload.project_name.strip() or "my-agent"
+    created_at = now_iso()
+    with connect() as db:
+        project = db.execute(
+            """
+            SELECT id, name, created_at
+            FROM projects
+            WHERE user_id = ? AND organization_id IS NULL
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (user["id"],),
+        ).fetchone()
+        if project is None:
+            enforce_limit(db, user["id"], "projects")
+            project_id = f"prj_{uuid.uuid4().hex}"
+            db.execute(
+                """
+                INSERT INTO projects (id, user_id, organization_id, name, created_at)
+                VALUES (?, ?, NULL, ?, ?)
+                """,
+                (project_id, user["id"], project_name, created_at),
+            )
+            record_analytics_event(
+                db,
+                "project_created",
+                user_id=user["id"],
+                project_id=project_id,
+                email=user["email"],
+                metadata={"project_name": project_name, "source": "simple_install"},
+            )
+            project = db.execute(
+                "SELECT id, name, created_at FROM projects WHERE id = ?",
+                (project_id,),
+            ).fetchone()
+
+        db.execute(
+            """
+            UPDATE api_keys
+            SET is_active = 0
+            WHERE user_id = ? AND project_id = ? AND is_active = 1
+            """,
+            (user["id"], project["id"]),
+        )
+        enforce_limit(db, user["id"], "api_keys")
+        generated = generate_api_key()
+        key_id = f"key_{uuid.uuid4().hex}"
+        db.execute(
+            """
+            INSERT INTO api_keys (
+                id, user_id, project_id, key_hash, key_prefix,
+                created_at, last_used_at, is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+            """,
+            (
+                key_id,
+                user["id"],
+                project["id"],
+                generated["key_hash"],
+                generated["key_prefix"],
+                created_at,
+            ),
+        )
+        record_analytics_event(
+            db,
+            "api_key_created",
+            user_id=user["id"],
+            project_id=project["id"],
+            email=user["email"],
+            metadata={"key_id": key_id, "source": "simple_install"},
+        )
+
+    api_url = public_base_url(request).rstrip("/")
+    login_command = (
+        f"software login --api-url {api_url} "
+        f"--api-key {generated['api_key']} --project-name {project['name']}"
+    )
+    return {
+        "ok": True,
+        "api_key": generated["api_key"],
+        "api_url": api_url,
+        "project": {"id": project["id"], "name": project["name"]},
+        "key": {
+            "id": key_id,
+            "project_id": project["id"],
+            "key_prefix": generated["key_prefix"],
+            "created_at": created_at,
+            "is_active": True,
+        },
+        "commands": {
+            "install": "pip install software-sdk",
+            "login": login_command,
+            "env": f"SOFTWARE_API_KEY={generated['api_key']}",
+            "test": "software test",
+        },
+        "message": "Copy this API key now. It will not be shown again.",
+    }
 
 
 @app.post("/api/projects")

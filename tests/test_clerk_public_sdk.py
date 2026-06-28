@@ -53,6 +53,9 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertEqual(docs.status_code, 200)
         self.assertIn("pip install software-sdk", install.text)
         self.assertIn("npm install software-sdk", install.text)
+        self.assertIn("Sign in to get API key", install.text)
+        self.assertIn("Show my API key", install.text)
+        self.assertNotIn("Project Connection", install.text)
         self.assertIn("pip install software-sdk", docs.json()["install"]["python"])
         self.assertIn("npm install software-sdk", docs.json()["install"]["node"])
         self.assertFalse(docs.json()["auth_required_for_install"])
@@ -101,6 +104,37 @@ class ClerkPublicSDKTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertIn("install and use the SDK locally", response.json()["detail"])
+
+    def test_signed_in_install_endpoint_creates_project_key_and_commands(self):
+        with patch.object(
+            app,
+            "verify_clerk_token",
+            return_value={"sub": "user_install", "email": "install@example.com"},
+        ), patch.object(app, "supabase_upsert_user_profile", return_value={"ok": True}):
+            response = self.client.post(
+                "/api/install/api-key",
+                headers={"Authorization": "Bearer clerk-token"},
+                json={"project_name": "simple-agent"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["api_key"].startswith("sw_"))
+        self.assertEqual(payload["project"]["name"], "simple-agent")
+        self.assertIn("software login --api-url", payload["commands"]["login"])
+        self.assertIn(payload["api_key"], payload["commands"]["login"])
+        with app.connect() as db:
+            project = db.execute(
+                "SELECT id, name FROM projects WHERE user_id = ?",
+                ("user_install",),
+            ).fetchone()
+            active_key_count = db.execute(
+                "SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1",
+                ("user_install",),
+            ).fetchone()[0]
+        self.assertIsNotNone(project)
+        self.assertEqual(project["name"], "simple-agent")
+        self.assertEqual(active_key_count, 1)
 
     def test_clerk_jwt_can_access_user_api_and_creates_user(self):
         with patch.object(

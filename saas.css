@@ -157,6 +157,39 @@ html[data-auth-state="signed-in"] [data-auth-signed-out] {
   padding: 12px;
 }
 
+.simple-install {
+  align-items: start;
+}
+
+.simple-divider {
+  background: var(--line);
+  height: 1px;
+  margin: 8px 0;
+}
+
+.simple-result {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+summary {
+  color: var(--purple);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+details .code-snippet {
+  margin: 12px 0;
+}
+
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
