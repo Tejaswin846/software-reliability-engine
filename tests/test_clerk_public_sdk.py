@@ -57,6 +57,33 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertIn("npm install software-sdk", docs.json()["install"]["node"])
         self.assertFalse(docs.json()["auth_required_for_install"])
 
+    def test_public_pages_expose_working_clerk_buttons(self):
+        landing = self.client.get("/")
+        login = self.client.get("/login")
+        register = self.client.get("/register")
+        forgot = self.client.get("/forgot-password")
+        reset = self.client.get("/reset-password")
+        pricing = self.client.get("/pricing")
+        auth_js = self.client.get("/auth.js")
+
+        for response in [landing, login, register, forgot, reset, pricing, auth_js]:
+            self.assertEqual(response.status_code, 200)
+
+        self.assertIn("Software", landing.text)
+        self.assertIn("brand-plus", landing.text)
+        self.assertIn("data-clerk-sign-in", landing.text)
+        self.assertIn("data-clerk-sign-up", landing.text)
+        self.assertIn("data-clerk-user-profile", landing.text)
+        self.assertIn("/auth.js", landing.text)
+        self.assertIn("data-clerk-sign-in", login.text)
+        self.assertIn("data-clerk-reset", login.text)
+        self.assertIn("data-clerk-sign-up", register.text)
+        self.assertIn("data-clerk-reset", forgot.text)
+        self.assertIn("data-clerk-reset", reset.text)
+        self.assertIn("data-clerk-sign-up", pricing.text)
+        self.assertIn("openUserProfile", auth_js.text)
+        self.assertIn("data-clerk-manage-account", auth_js.text)
+
     def test_dashboard_page_loads_but_data_api_requires_auth(self):
         dashboard = self.client.get("/dashboard")
         projects = self.client.get("/api/projects")

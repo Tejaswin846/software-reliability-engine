@@ -7,166 +7,167 @@
     <link rel="stylesheet" href="/landing.css">
   </head>
   <body>
-    <header class="topbar">
-      <a class="brand" href="/">Software</a>
-      <nav class="nav">
-        <a href="/demo">Demo</a>
-        <a href="/developer-docs">Docs</a>
-        <a href="/benchmarks">Benchmarks</a>
-        <a href="/onboarding">Onboarding</a>
-        <a href="/pricing">Pricing</a>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/login">Login</a>
-        <a class="button" href="/install">Install SDK</a>
-      </nav>
-    </header>
+    <div class="site-frame">
+      <header class="topbar">
+        <a class="brand" href="/">
+          <span class="brand-mark">S</span>
+          <span>Software<span class="brand-plus">+</span></span>
+        </a>
+        <nav class="nav" aria-label="Primary navigation">
+          <a href="#features">Features</a>
+          <a href="/pricing">Pricing</a>
+          <a href="/developer-docs">Resources</a>
+          <a href="/install">Tools</a>
+          <a href="#about">About</a>
+          <button type="button" class="ghost icon" aria-label="Toggle theme">o</button>
+          <button type="button" class="ghost" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Log in</button>
+          <button type="button" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Get Started <span aria-hidden="true">-></span></button>
+          <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Account</button>
+          <button type="button" class="ghost" data-clerk-sign-out data-auth-signed-in>Log out</button>
+        </nav>
+      </header>
 
-    <main>
-      <section class="hero">
-        <div>
-          <p class="eyebrow">AI Agent Reliability</p>
-          <h1>Know when your AI agents fail before your users do.</h1>
-          <p class="lead">
-            Software is an observability and reliability layer for agentic systems.
-            It tracks workflows, model calls, tool calls, predictions, guardrails,
-            and recovery signals from your own AI agents.
-          </p>
-          <div class="hero-actions">
-            <a class="button" href="/install">Install Software SDK</a>
-            <a class="button secondary" href="/register">Sign Up</a>
-            <a class="button secondary" href="/demo">View Demo</a>
-            <a class="button secondary" href="/developer-docs">Read the Docs</a>
-          </div>
-        </div>
-
-        <div class="hero-panel" aria-label="Dashboard screenshot preview">
-          <div class="browser-bar">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="muted">/dashboard</span>
-          </div>
-          <div class="dashboard-shot">
-            <div class="metric-row">
-              <div class="shot-card"><span>Reliability</span><strong>92</strong></div>
-              <div class="shot-card"><span>Success Rate</span><strong>88%</strong></div>
-              <div class="shot-card"><span>Guardrails</span><strong>31</strong></div>
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <p class="eyebrow">Built for reliable AI workflows</p>
+            <h1>Get clear signals for every <span class="accent-text">agent workflow</span> before it reaches users</h1>
+            <p class="lead">
+              Software helps teams test, monitor, and improve AI agents with workflow telemetry, dry-run safety checks,
+              memory context, tool reliability, recovery suggestions, and audit-ready evidence.
+            </p>
+            <div class="hero-actions">
+              <button type="button" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Start free <span aria-hidden="true">-></span></button>
+              <a class="button secondary" href="/install">Install SDK</a>
+              <button type="button" class="secondary" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Sign in</button>
+              <a class="button secondary" href="/dashboard" data-auth-signed-in>Open Dashboard</a>
             </div>
-            <div class="chart-row">
-              <div class="shot-card">
-                <span>Tool Reliability</span>
-                <div class="bar"><div style="width: 86%"></div></div>
-              </div>
-              <div class="shot-card">
-                <span>Prediction Accuracy</span>
-                <div class="bar"><div style="width: 94%"></div></div>
-              </div>
-              <div class="shot-card">
-                <span>Workflow Health</span>
-                <div class="bar"><div style="width: 78%"></div></div>
+            <ul class="micro-list" aria-label="Setup notes">
+              <li>No credit card required</li>
+              <li>SDK install works without login</li>
+              <li>Cloud features use Clerk auth</li>
+            </ul>
+          </div>
+
+          <div class="hero-visual" aria-label="Software workflow preview">
+            <div class="phone-shell">
+              <div class="phone-notch"></div>
+              <div class="phone-screen">
+                <div class="phone-top">
+                  <div>
+                    <p class="muted">Good morning,</p>
+                    <h3>Agent plan for today</h3>
+                  </div>
+                  <span class="avatar">AI</span>
+                </div>
+
+                <div class="progress-card">
+                  <div>
+                    <strong>Great progress</strong>
+                    <p class="muted">Your workflows passed safety gates.</p>
+                  </div>
+                  <div><strong>12</strong><p class="muted">dry-runs</p></div>
+                </div>
+
+                <div class="snapshot-card">
+                  <div class="row">
+                    <h3>Reliability snapshot</h3>
+                    <span class="muted">Updated now</span>
+                  </div>
+                  <div class="snapshot-grid">
+                    <div class="snapshot-item">
+                      <span class="snapshot-icon">M</span>
+                      <strong>Memory</strong>
+                      <p class="muted">Level 3</p>
+                    </div>
+                    <div class="snapshot-item">
+                      <span class="snapshot-icon">T</span>
+                      <strong>Tools</strong>
+                      <p class="muted">Level 4</p>
+                    </div>
+                    <div class="snapshot-item">
+                      <span class="snapshot-icon">S</span>
+                      <strong>Safety</strong>
+                      <p class="muted">Level 5</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="match-card">
+                  <div>
+                    <h3>Reliability score</h3>
+                    <p class="muted">Workflow has the required checks.</p>
+                  </div>
+                  <div class="score-ring">95%</div>
+                </div>
+
+                <div class="task-row">
+                  <span class="avatar">G</span>
+                  <div>
+                    <strong>Gmail dry-run</strong>
+                    <p class="muted">No real email sent</p>
+                  </div>
+                  <span class="pill">safe</span>
+                </div>
+                <div class="task-row">
+                  <span class="avatar">DB</span>
+                  <div>
+                    <strong>Delete-data request</strong>
+                    <p class="muted">Blocked before execution</p>
+                  </div>
+                  <span class="pill">blocked</span>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      <section class="section">
-        <h2>What is Software?</h2>
-        <p class="lead">
-          Software is a developer platform for measuring and improving AI-agent reliability.
-          Developers install the SDK, create a project, generate an API key, and send workflow telemetry
-          from their agents into a hosted reliability dashboard.
-        </p>
-      </section>
+        <section id="features" class="section">
+          <div class="section-head">
+            <p class="eyebrow">Capabilities</p>
+            <h2>Everything needed to test real AI workflow operations</h2>
+            <p class="lead">Use Software locally without signing in, then connect protected cloud features only when a project needs shared state, integrations, and audit logs.</p>
+          </div>
+          <div class="grid">
+            <article class="feature-card"><h3>Public SDK install</h3><p>Install with pip or npm, read docs, run local validation, and try sandbox workflows without an account.</p></article>
+            <article class="feature-card"><h3>Clerk authentication</h3><p>Sign-up, login, password reset, email verification, Google OAuth, GitHub OAuth, sessions, and account management run through Clerk.</p></article>
+            <article class="feature-card"><h3>Safe execution gates</h3><p>Risky actions dry-run by default, high-risk work requires confirmation, and unsafe database or delete operations are blocked.</p></article>
+            <article class="feature-card"><h3>Tool reliability</h3><p>Track model calls, tool calls, latency, confidence, failure reasons, and recovery attempts across external AI agents.</p></article>
+            <article class="feature-card"><h3>User isolation</h3><p>Projects, workflows, memory, audit logs, API keys, and settings are scoped to the Clerk user id.</p></article>
+            <article class="feature-card"><h3>Audit-ready reports</h3><p>Keep durable events for successful safe actions, blocked actions, timeline entries, and final reliability scores.</p></article>
+          </div>
+        </section>
 
-      <section class="section">
-        <h2>Why reliability matters</h2>
-        <div class="grid">
-          <article class="card">
-            <h3>Agents fail differently</h3>
-            <p>Real agents fail through tool errors, timeouts, context loss, low confidence, and bad recovery paths.</p>
-          </article>
-          <article class="card">
-            <h3>Simulation is not enough</h3>
-            <p>Software tracks the difference between simulated success and real execution so teams can close the gap.</p>
-          </article>
-          <article class="card">
-            <h3>Guardrails need evidence</h3>
-            <p>Predictions and guardrails become useful when every stage, tool call, model call, and error is recorded.</p>
-          </article>
-        </div>
-      </section>
+        <section id="about" class="section">
+          <div class="metrics-strip">
+            <article class="metric-card"><span class="muted">Safety mode</span><strong>Dry-run</strong></article>
+            <article class="metric-card"><span class="muted">Protected auth</span><strong>Clerk</strong></article>
+            <article class="metric-card"><span class="muted">Memory layer</span><strong>Qdrant</strong></article>
+            <article class="metric-card"><span class="muted">Test state</span><strong>Redis</strong></article>
+          </div>
+        </section>
 
-      <section class="section">
-        <h2>Features</h2>
-        <div class="grid">
-          <article class="card"><h3>Workflow Tracking</h3><p>Track workflow starts, stages, completions, confidence, and latency.</p></article>
-          <article class="card"><h3>Model and Tool Observability</h3><p>Log model calls, tool calls, failures, result counts, and performance.</p></article>
-          <article class="card"><h3>Prediction and Guardrails</h3><p>Estimate failure probability and receive guardrail recommendations before completion.</p></article>
-          <article class="card"><h3>Multi-User SaaS</h3><p>Create accounts, projects, and hashed API keys for project-scoped agent telemetry.</p></article>
-          <article class="card"><h3>Dashboard Analytics</h3><p>Visualize success rates, failure rates, reliability scores, tool reliability, and trends.</p></article>
-          <article class="card"><h3>SQLite First</h3><p>Start locally with SQLite, then deploy the same FastAPI app to Render, Azure, or Docker.</p></article>
-        </div>
-      </section>
+        <section class="section">
+          <div class="section-head">
+            <p class="eyebrow">Start</p>
+            <h2>Install publicly, connect cloud later</h2>
+          </div>
+          <div class="code-block">pip install software-sdk
+npm install software-sdk
 
-      <section class="section">
-        <h2>SDK example</h2>
-        <p class="lead">Install the SDK, connect your project, then send a test workflow.</p>
-        <div class="code-block">pip install software-sdk
+# optional cloud mode
 software login
-software init
-software test</div>
-      </section>
+SOFTWARE_API_KEY=sw_your_key</div>
+          <div class="hero-actions">
+            <a class="button" href="/install">Open SDK install</a>
+            <button type="button" class="secondary" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Create cloud account</button>
+            <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Manage account</button>
+          </div>
+        </section>
+      </main>
 
-      <section class="section">
-        <h2>Track a workflow</h2>
-        <div class="code-block">from software_sdk import ReliabilityMonitor
-
-monitor = ReliabilityMonitor(
-    project_name="my-agent",
-    api_url="https://YOUR_SOFTWARE_URL",
-    api_key="sw_..."
-)
-
-with monitor.track_workflow("research-task") as workflow:
-    workflow.track_stage("search", status="completed", success=True, latency_ms=1200, confidence=0.94)
-    workflow.log_tool_call("parallel_search", success=True, latency_ms=1200, result_count=5)
-    workflow.track_stage("generation", status="completed", success=True, latency_ms=5000, confidence=0.91)
-    workflow.log_model_call("llama3.2:3b", success=True, latency_ms=5000, confidence=0.91)
-    workflow.complete(success=True, confidence=0.91)</div>
-      </section>
-
-      <section class="section">
-        <h2>Dashboard screenshots</h2>
-        <div class="grid">
-          <article class="card"><h3>Overview</h3><p>Reliability score, success rate, failure rate, execution time, and confidence.</p></article>
-          <article class="card"><h3>SDK Workflows</h3><p>Recent project-scoped workflows with prediction risk and guardrail action.</p></article>
-          <article class="card"><h3>Tool Reliability</h3><p>Search and extraction reliability compared against model behavior.</p></article>
-        </div>
-      </section>
-
-      <section class="section">
-        <h2>Pricing</h2>
-        <article class="card pricing-card">
-          <div>
-            <h3>Developer Preview</h3>
-          <p class="muted">Free, Pro, and Enterprise plans are available as usage-limited SaaS tiers.</p>
-        </div>
-          <a class="button" href="/pricing">View Pricing</a>
-        </article>
-      </section>
-
-      <section class="section">
-        <h2>Start in five minutes</h2>
-        <p class="lead">Create an account, make a project, generate an API key, run an example, and watch the workflow appear in the dashboard.</p>
-        <div class="hero-actions">
-          <a class="button" href="/register">Sign Up</a>
-          <a class="button secondary" href="/onboarding">Onboarding</a>
-          <a class="button secondary" href="/docs/quick-start">Quick Start</a>
-        </div>
-      </section>
-    </main>
-
-    <footer class="footer">Software - Reliability infrastructure for AI agents</footer>
+      <footer class="footer">Software - reliability infrastructure for AI agents</footer>
+    </div>
+    <script src="/auth.js"></script>
   </body>
 </html>

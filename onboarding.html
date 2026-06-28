@@ -7,14 +7,16 @@
     <link rel="stylesheet" href="/landing.css">
   </head>
   <body>
+    <div class="site-frame">
     <header class="topbar">
-      <a class="brand" href="/">Software</a>
+      <a class="brand" href="/"><span class="brand-mark">S</span><span>Software<span class="brand-plus">+</span></span></a>
       <nav class="nav">
         <a href="/developer-docs">Docs</a>
         <a href="/pricing">Pricing</a>
         <a href="/dashboard">Dashboard</a>
-        <a href="/login">Login</a>
-        <a class="button" href="/register">Sign Up</a>
+        <button type="button" class="ghost" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Log in</button>
+        <button type="button" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Sign Up</button>
+        <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Account</button>
       </nav>
     </header>
 
@@ -104,5 +106,7 @@ with monitor.track_workflow("research-task") as workflow:
     </main>
 
     <footer class="footer">Software - installable reliability monitoring for AI agents</footer>
+    </div>
+    <script src="/auth.js"></script>
   </body>
 </html>

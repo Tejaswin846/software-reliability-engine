@@ -3,29 +3,40 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Login - Software</title>
+    <title>Log in - Software</title>
     <link rel="stylesheet" href="/saas.css">
   </head>
   <body>
     <header class="topbar">
-      <p class="brand"><span>Software</span><strong>Login</strong></p>
+      <a class="brand" href="/"><span class="brand-mark">S</span><strong>Software+</strong></a>
       <nav class="nav">
         <a href="/install">Install SDK</a>
-        <a href="/register">Create account</a>
-        <a href="/dashboard">Dashboard</a>
+        <a href="/pricing">Pricing</a>
+        <button type="button" class="secondary" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Get Started</button>
+        <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Account</button>
       </nav>
     </header>
-    <main class="shell">
-      <section class="panel stack">
-        <h1>Welcome back</h1>
-        <p class="muted">Sign in with Clerk to manage projects, API keys, cloud workflows, and integrations.</p>
-        <button type="button" data-clerk-sign-in>Sign in with Clerk</button>
-        <button type="button" class="secondary" data-clerk-reset>Reset password</button>
+    <main class="auth-shell">
+      <section class="auth-copy">
+        <p class="eyebrow">Welcome back</p>
+        <h1>Log in to your <span class="accent-text">reliability workspace</span></h1>
+        <p class="muted">Use Clerk to sign in with email, Google, or GitHub. Your projects, workflows, memory, audit logs, API keys, and settings stay isolated to your user id.</p>
+        <div class="auth-preview">
+          <div class="auth-preview-row"><span>01</span><strong>Open your dashboard</strong><span class="muted">Clerk session</span></div>
+          <div class="auth-preview-row"><span>02</span><strong>Manage cloud projects</strong><span class="muted">protected</span></div>
+          <div class="auth-preview-row"><span>03</span><strong>Install SDK anytime</strong><span class="muted">public</span></div>
+        </div>
+      </section>
+      <section class="auth-card stack">
+        <h2>Continue with Clerk</h2>
+        <p class="muted">Clerk handles password sign-in, Google OAuth, GitHub OAuth, email verification, sessions, and reset links.</p>
+        <button type="button" data-clerk-sign-in data-auth-redirect="/dashboard" data-loading-text="Opening Clerk...">Log in</button>
+        <button type="button" class="secondary" data-clerk-reset data-auth-redirect="/dashboard" data-loading-text="Opening reset...">Reset password</button>
+        <button type="button" class="secondary" data-clerk-sign-up data-auth-redirect="/projects" data-loading-text="Opening signup...">Create account</button>
         <a href="/install">Install the SDK without signing in</a>
         <div id="login-message" data-auth-message class="message"></div>
       </section>
     </main>
     <script src="/auth.js"></script>
-    <script src="/saas.js"></script>
   </body>
 </html>
