@@ -52,7 +52,9 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertEqual(sdk.status_code, 200)
         self.assertEqual(docs.status_code, 200)
         self.assertIn("pip install software-sdk", install.text)
+        self.assertIn("npm install software-sdk", install.text)
         self.assertIn("pip install software-sdk", docs.json()["install"]["python"])
+        self.assertIn("npm install software-sdk", docs.json()["install"]["node"])
         self.assertFalse(docs.json()["auth_required_for_install"])
 
     def test_dashboard_page_loads_but_data_api_requires_auth(self):

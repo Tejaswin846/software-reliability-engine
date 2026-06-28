@@ -95,6 +95,14 @@
 
           <article class="card stack">
             <div class="row">
+              <h2>npm install</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-npm">Copy npm install command</button>
+            </div>
+            <pre id="install-command-npm" class="code-snippet">npm install software-sdk</pre>
+          </article>
+
+          <article class="card stack">
+            <div class="row">
               <h2>Local/dev install</h2>
               <button type="button" class="secondary" data-copy-target="install-command-local">Copy local install command</button>
             </div>
@@ -125,8 +133,8 @@
         <div class="install-steps">
           <article class="card"><h2>1. Create project</h2><p class="muted">Create or select the project that should receive workflow telemetry.</p></article>
           <article class="card"><h2>2. Generate API key</h2><p class="muted">Generate a key here or on the API Keys page. Full keys are only shown once.</p></article>
-          <article class="card"><h2>3. Install SDK</h2><p class="muted">Use GitHub install today. Switch to PyPI after the package is published.</p></article>
-          <article class="card"><h2>4. Run software login</h2><p class="muted">Save API URL and API key in your local user config.</p></article>
+          <article class="card"><h2>3. Install SDK</h2><p class="muted">Use pip or npm without signing in.</p></article>
+          <article class="card"><h2>4. Optional cloud login</h2><p class="muted">Save API URL and API key only when you need protected cloud features.</p></article>
           <article class="card"><h2>5. Run software test</h2><p class="muted">Send a real test workflow through the SDK ingestion API.</p></article>
           <article class="card"><h2>6. View dashboard</h2><p class="muted">Open the SDK Workflows panel and confirm the test workflow appears.</p></article>
         </div>

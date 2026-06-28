@@ -7596,6 +7596,7 @@ def api_sdk_docs() -> Dict[str, Any]:
         "auth_required_for_docs": False,
         "install": {
             "python": "pip install software-sdk",
+            "node": "npm install software-sdk",
             "github": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
             "local": "pip install -e .",
         },
