@@ -1991,16 +1991,33 @@ def ensure_clerk_user(claims: Dict[str, Any]) -> Dict[str, Any]:
     if not email:
         email = f"{user_id}@clerk.local"
     user = ensure_external_user(user_id, email, now_iso())
-    supabase_upsert_user_profile(
-        user_id=user_id,
-        email=email,
-        metadata={
-            "provider": "clerk",
-            "email_verified": bool(claims.get("email_verified")),
-            "first_name": claims.get("first_name") or profile.get("first_name"),
-            "last_name": claims.get("last_name") or profile.get("last_name"),
-        },
-    )
+    try:
+        profile_sync = supabase_upsert_user_profile(
+            user_id=user_id,
+            email=email,
+            metadata={
+                "provider": "clerk",
+                "email_verified": bool(claims.get("email_verified")),
+                "first_name": claims.get("first_name") or profile.get("first_name"),
+                "last_name": claims.get("last_name") or profile.get("last_name"),
+            },
+        )
+    except Exception as error:
+        profile_sync = {"ok": False, "error": redact_text(str(error))}
+        capture_operational_error(
+            error,
+            category="external_http_or_provider_failure",
+            level="warning",
+            user_id=user_id,
+            provider="supabase",
+            operation="upsert_user_profile",
+        )
+    if not profile_sync.get("ok"):
+        LOGGER.warning(
+            "Supabase profile sync failed for Clerk user %s: %s",
+            user_id,
+            profile_sync.get("error") or "unknown error",
+        )
     redis_set_session_cache(
         session_cache_id(user_id),
         {"user": user, "provider": "clerk"},
@@ -6932,93 +6949,121 @@ def create_install_api_key(
     init_db()
     project_name = payload.project_name.strip() or "my-agent"
     created_at = now_iso()
-    with connect() as db:
-        project = db.execute(
-            """
-            SELECT id, name, created_at
-            FROM projects
-            WHERE user_id = ? AND organization_id IS NULL
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (user["id"],),
-        ).fetchone()
-        if project is None:
-            enforce_limit(db, user["id"], "projects")
-            project_id = f"prj_{uuid.uuid4().hex}"
+    try:
+        with connect() as db:
+            project = db.execute(
+                """
+                SELECT id, name, created_at
+                FROM projects
+                WHERE user_id = ?
+                ORDER BY
+                    CASE WHEN organization_id IS NULL THEN 0 ELSE 1 END,
+                    created_at ASC
+                LIMIT 1
+                """,
+                (user["id"],),
+            ).fetchone()
+            if project is None:
+                enforce_limit(db, user["id"], "projects")
+                project_id = f"prj_{uuid.uuid4().hex}"
+                db.execute(
+                    """
+                    INSERT INTO projects (id, user_id, organization_id, name, created_at)
+                    VALUES (?, ?, NULL, ?, ?)
+                    """,
+                    (project_id, user["id"], project_name, created_at),
+                )
+                record_analytics_event(
+                    db,
+                    "project_created",
+                    user_id=user["id"],
+                    project_id=project_id,
+                    email=user["email"],
+                    metadata={"project_name": project_name, "source": "simple_install"},
+                )
+                project = db.execute(
+                    "SELECT id, name, created_at FROM projects WHERE id = ?",
+                    (project_id,),
+                ).fetchone()
+
+            if project is None:
+                raise HTTPException(status_code=500, detail="Could not prepare a project for this API key.")
+
+            project_id = str(project["id"])
+            project_display_name = str(project["name"])
+            replaced_cursor = db.execute(
+                """
+                UPDATE api_keys
+                SET is_active = 0
+                WHERE user_id = ? AND is_active = 1
+                """,
+                (user["id"],),
+            )
+            replaced_existing_keys = max(0, int(replaced_cursor.rowcount or 0))
+            enforce_limit(db, user["id"], "api_keys")
+            generated = generate_api_key()
+            key_id = f"key_{uuid.uuid4().hex}"
             db.execute(
                 """
-                INSERT INTO projects (id, user_id, organization_id, name, created_at)
-                VALUES (?, ?, NULL, ?, ?)
+                INSERT INTO api_keys (
+                    id, user_id, project_id, key_hash, key_prefix,
+                    created_at, last_used_at, is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
                 """,
-                (project_id, user["id"], project_name, created_at),
+                (
+                    key_id,
+                    user["id"],
+                    project_id,
+                    generated["key_hash"],
+                    generated["key_prefix"],
+                    created_at,
+                ),
             )
             record_analytics_event(
                 db,
-                "project_created",
+                "api_key_created",
                 user_id=user["id"],
                 project_id=project_id,
                 email=user["email"],
-                metadata={"project_name": project_name, "source": "simple_install"},
+                metadata={
+                    "key_id": key_id,
+                    "source": "simple_install",
+                    "replaced_existing_keys": replaced_existing_keys,
+                },
             )
-            project = db.execute(
-                "SELECT id, name, created_at FROM projects WHERE id = ?",
-                (project_id,),
-            ).fetchone()
-
-        db.execute(
-            """
-            UPDATE api_keys
-            SET is_active = 0
-            WHERE user_id = ? AND project_id = ? AND is_active = 1
-            """,
-            (user["id"], project["id"]),
-        )
-        enforce_limit(db, user["id"], "api_keys")
-        generated = generate_api_key()
-        key_id = f"key_{uuid.uuid4().hex}"
-        db.execute(
-            """
-            INSERT INTO api_keys (
-                id, user_id, project_id, key_hash, key_prefix,
-                created_at, last_used_at, is_active
-            )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
-            """,
-            (
-                key_id,
-                user["id"],
-                project["id"],
-                generated["key_hash"],
-                generated["key_prefix"],
-                created_at,
-            ),
-        )
-        record_analytics_event(
-            db,
-            "api_key_created",
+    except HTTPException:
+        raise
+    except sqlite3.Error as error:
+        LOGGER.exception("Install API key creation failed for user %s", user["id"])
+        capture_operational_error(
+            error,
+            category="api_key_creation_failure",
             user_id=user["id"],
-            project_id=project["id"],
-            email=user["email"],
-            metadata={"key_id": key_id, "source": "simple_install"},
+            operation="simple_install_api_key",
         )
+        raise HTTPException(
+            status_code=500,
+            detail="Could not create your API key. Please try again in a moment.",
+        ) from error
 
     api_url = public_base_url(request).rstrip("/")
     login_command = (
         f"software login --api-url {api_url} "
-        f"--api-key {generated['api_key']} --project-name {project['name']}"
+        f"--api-key {generated['api_key']} --project-name {project_display_name}"
     )
     return {
         "ok": True,
         "api_key": generated["api_key"],
         "api_url": api_url,
-        "project": {"id": project["id"], "name": project["name"]},
+        "project": {"id": project_id, "name": project_display_name},
         "key": {
             "id": key_id,
-            "project_id": project["id"],
+            "project_id": project_id,
             "key_prefix": generated["key_prefix"],
             "created_at": created_at,
             "is_active": True,
+            "replaced_existing_keys": replaced_existing_keys,
         },
         "commands": {
             "install": "pip install software-sdk",

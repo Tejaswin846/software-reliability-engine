@@ -136,6 +136,73 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertEqual(project["name"], "simple-agent")
         self.assertEqual(active_key_count, 1)
 
+    def test_signed_in_install_endpoint_replaces_existing_active_keys(self):
+        with patch.object(
+            app,
+            "verify_clerk_token",
+            return_value={"sub": "user_replace_key", "email": "replace@example.com"},
+        ), patch.object(app, "supabase_upsert_user_profile", return_value={"ok": True}):
+            first_response = self.client.post(
+                "/api/install/api-key",
+                headers={"Authorization": "Bearer clerk-token"},
+                json={"project_name": "first-agent"},
+            )
+
+        self.assertEqual(first_response.status_code, 200)
+        extra_key = app.generate_api_key()
+        created_at = app.now_iso()
+        with app.connect() as db:
+            db.execute(
+                """
+                INSERT INTO projects (id, user_id, organization_id, name, created_at)
+                VALUES (?, ?, NULL, ?, ?)
+                """,
+                ("prj_extra_install", "user_replace_key", "extra-agent", created_at),
+            )
+            db.execute(
+                """
+                INSERT INTO api_keys (
+                    id, user_id, project_id, key_hash, key_prefix,
+                    created_at, last_used_at, is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                """,
+                (
+                    "key_extra_install",
+                    "user_replace_key",
+                    "prj_extra_install",
+                    extra_key["key_hash"],
+                    extra_key["key_prefix"],
+                    created_at,
+                ),
+            )
+
+        with patch.object(
+            app,
+            "verify_clerk_token",
+            return_value={"sub": "user_replace_key", "email": "replace@example.com"},
+        ), patch.object(app, "supabase_upsert_user_profile", return_value={"ok": True}):
+            second_response = self.client.post(
+                "/api/install/api-key",
+                headers={"Authorization": "Bearer clerk-token"},
+                json={"project_name": "second-agent"},
+            )
+
+        self.assertEqual(second_response.status_code, 200)
+        payload = second_response.json()
+        self.assertGreaterEqual(payload["key"]["replaced_existing_keys"], 2)
+        with app.connect() as db:
+            active_key_count = db.execute(
+                "SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1",
+                ("user_replace_key",),
+            ).fetchone()[0]
+            total_key_count = db.execute(
+                "SELECT COUNT(*) FROM api_keys WHERE user_id = ?",
+                ("user_replace_key",),
+            ).fetchone()[0]
+        self.assertEqual(active_key_count, 1)
+        self.assertEqual(total_key_count, 3)
+
     def test_clerk_jwt_can_access_user_api_and_creates_user(self):
         with patch.object(
             app,

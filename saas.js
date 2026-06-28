@@ -427,17 +427,26 @@ function initInstallPage() {
     const generateButton = event.target.closest("#simple-api-key-button");
     if (generateButton) {
       const projectName = document.getElementById("simple-project-name")?.value.trim() || "my-agent";
+      const result = document.getElementById("simple-api-key-result");
+      const apiKey = document.getElementById("simple-api-key");
+      const loginCommand = document.getElementById("simple-login-command");
       try {
         generateButton.disabled = true;
         generateButton.textContent = "Creating key...";
+        if (result) {
+          result.hidden = true;
+        }
+        if (apiKey) {
+          apiKey.textContent = "";
+        }
+        if (loginCommand) {
+          loginCommand.textContent = "";
+        }
         const response = await api("/api/install/api-key", {
           method: "POST",
           body: JSON.stringify({ project_name: projectName }),
         });
         sessionStorage.setItem("software_install_api_key", response.api_key);
-        const result = document.getElementById("simple-api-key-result");
-        const apiKey = document.getElementById("simple-api-key");
-        const loginCommand = document.getElementById("simple-login-command");
         if (apiKey) {
           apiKey.textContent = response.api_key;
         }
