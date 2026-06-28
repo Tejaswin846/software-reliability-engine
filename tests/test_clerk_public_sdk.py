@@ -203,6 +203,50 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertEqual(active_key_count, 1)
         self.assertEqual(total_key_count, 3)
 
+    def test_install_endpoint_handles_clerk_token_without_email_claim(self):
+        class ClerkProfileResponse:
+            status_code = 200
+            content = b'{"id":"user_profile_fetch"}'
+
+            @staticmethod
+            def json():
+                return {
+                    "id": "user_profile_fetch",
+                    "primary_email_address_id": "email_primary",
+                    "email_addresses": [
+                        {
+                            "id": "email_primary",
+                            "email_address": "profile-fetch@example.com",
+                        }
+                    ],
+                }
+
+        with patch.object(
+            app,
+            "verify_clerk_token",
+            return_value={"sub": "user_profile_fetch"},
+        ), patch.object(app.requests, "get", return_value=ClerkProfileResponse()) as clerk_get, patch.object(
+            app,
+            "supabase_upsert_user_profile",
+            return_value={"ok": True},
+        ):
+            response = self.client.post(
+                "/api/install/api-key",
+                headers={"Authorization": "Bearer clerk-token"},
+                json={"project_name": "profile-fetch-agent"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["api_key"].startswith("sw_"))
+        clerk_get.assert_called_once()
+        with app.connect() as db:
+            row = db.execute(
+                "SELECT id, email FROM users WHERE id = ?",
+                ("user_profile_fetch",),
+            ).fetchone()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["email"], "profile-fetch@example.com")
+
     def test_clerk_jwt_can_access_user_api_and_creates_user(self):
         with patch.object(
             app,

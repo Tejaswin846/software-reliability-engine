@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 import bcrypt
 import jwt
+import requests
 from jwt import PyJWKClient
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
