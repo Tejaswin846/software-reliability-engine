@@ -4,6 +4,7 @@
   let configPromise = null;
   let clerkPromise = null;
   let clerk = null;
+  const scriptPromises = {};
 
   function qs(selector) {
     return document.querySelector(selector);
@@ -30,23 +31,98 @@
     return configPromise;
   }
 
-  function loadClerkSdk() {
-    return new Promise((resolve, reject) => {
-      if (window.Clerk) return resolve();
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js";
-      script.async = true;
-      script.onload = resolve;
-      script.onerror = () => {
-        const fallback = document.createElement("script");
-        fallback.src = "https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js";
-        fallback.async = true;
-        fallback.onload = resolve;
-        fallback.onerror = () => reject(new Error("Could not load Clerk authentication."));
-        document.head.appendChild(fallback);
-      };
-      document.head.appendChild(script);
-    });
+  function clerkFrontendApi(config) {
+    const publishableKey = config.clerk_publishable_key || "";
+    const encoded = publishableKey.split("_").slice(2).join("_");
+    if (encoded) {
+      try {
+        const decoded = atob(encoded).replace(/\$$/, "");
+        if (decoded) return decoded;
+      } catch (_error) {
+        // Fall back to the issuer host below.
+      }
+    }
+    try {
+      return new URL(config.clerk_jwt_issuer).host;
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function loadScriptOnce(id, src, attributes = {}) {
+    if (document.getElementById(id)) return scriptPromises[id] || Promise.resolve();
+    if (!scriptPromises[id]) {
+      scriptPromises[id] = new Promise((resolve, reject) => {
+        const script = document.createElement("script");
+        script.id = id;
+        script.src = src;
+        script.async = true;
+        script.crossOrigin = "anonymous";
+        Object.entries(attributes).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) script.setAttribute(key, String(value));
+        });
+        script.onload = resolve;
+        script.onerror = () => reject(new Error("Could not load Clerk authentication."));
+        document.head.appendChild(script);
+      });
+    }
+    return scriptPromises[id];
+  }
+
+  async function loadClerkSdk(config) {
+    if (window.Clerk) return;
+    const frontendApi = clerkFrontendApi(config);
+    if (!frontendApi) {
+      throw new Error("Clerk frontend API could not be resolved from the publishable key.");
+    }
+    const baseUrl = `https://${frontendApi}/npm`;
+    await loadScriptOnce("software-clerk-ui", `${baseUrl}/@clerk/ui@latest/dist/ui.browser.js`);
+    await loadScriptOnce(
+      "software-clerk-js",
+      `${baseUrl}/@clerk/clerk-js@latest/dist/clerk.browser.js`,
+      { "data-clerk-publishable-key": config.clerk_publishable_key }
+    );
+  }
+
+  async function createClerkInstance(config) {
+    const exported = window.Clerk;
+    if (!exported) {
+      throw new Error("Clerk loaded, but no Clerk object was found.");
+    }
+    if (typeof exported === "function") {
+      return new exported(config.clerk_publishable_key);
+    }
+    if (exported.Clerk && typeof exported.Clerk === "function") {
+      return new exported.Clerk(config.clerk_publishable_key);
+    }
+    if (exported.default && typeof exported.default === "function") {
+      return new exported.default(config.clerk_publishable_key);
+    }
+    if (exported.default && typeof exported.default.load === "function") {
+      return exported.default;
+    }
+    if (typeof exported.load === "function") {
+      return exported;
+    }
+    throw new Error("Clerk loaded, but this browser bundle is unsupported.");
+  }
+
+  async function loadLegacyClerkSdk(config) {
+    try {
+      await loadScriptOnce(
+        "software-clerk-js-legacy",
+        "https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js",
+        { "data-clerk-publishable-key": config.clerk_publishable_key }
+      );
+      return true;
+    } catch (_error) {
+      await loadScriptOnce(
+        "software-clerk-js-unpkg",
+        "https://unpkg.com/@clerk/clerk-js@latest/dist/clerk.browser.js",
+        { "data-clerk-publishable-key": config.clerk_publishable_key }
+      );
+      return true;
+    }
   }
 
   async function ensureClerk() {
@@ -56,9 +132,13 @@
         if (!config.configured || !config.clerk_publishable_key) {
           throw new Error("Clerk is not configured for this Software deployment.");
         }
-        await loadClerkSdk();
-        clerk = new window.Clerk(config.clerk_publishable_key);
-        await clerk.load();
+        try {
+          await loadClerkSdk(config);
+        } catch (_error) {
+          await loadLegacyClerkSdk(config);
+        }
+        clerk = await createClerkInstance(config);
+        await clerk.load({ publishableKey: config.clerk_publishable_key });
         await refreshSession();
         clerk.addListener?.(async ({ user, session }) => {
           if (user || session) {

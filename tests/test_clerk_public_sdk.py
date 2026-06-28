@@ -83,6 +83,8 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertIn("data-clerk-sign-up", pricing.text)
         self.assertIn("openUserProfile", auth_js.text)
         self.assertIn("data-clerk-manage-account", auth_js.text)
+        self.assertIn("createClerkInstance", auth_js.text)
+        self.assertNotIn("new window.Clerk", auth_js.text)
 
     def test_dashboard_page_loads_but_data_api_requires_auth(self):
         dashboard = self.client.get("/dashboard")
