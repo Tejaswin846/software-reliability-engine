@@ -396,6 +396,45 @@
     });
   }
 
+  function installDashboardFetchFallback() {
+    if (window.__softwareDashboardFetchFallbackInstalled) return;
+    window.__softwareDashboardFetchFallbackInstalled = true;
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+      const rawUrl = typeof input === "string" ? input : input?.url;
+      let pathname = "";
+      try {
+        pathname = new URL(rawUrl || "", window.location.href).pathname;
+      } catch (_error) {
+        pathname = "";
+      }
+      if (pathname !== "/api/me/dashboard") {
+        return originalFetch(input, init);
+      }
+
+      const nextInit = Object.assign({}, init || {});
+      const headers = new Headers(nextInit.headers || input?.headers || {});
+      headers.set("Accept", headers.get("Accept") || "application/json");
+      const token = await authToken();
+      if (token && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${token}`);
+      }
+      nextInit.credentials = nextInit.credentials || "same-origin";
+      nextInit.headers = headers;
+
+      const response = await originalFetch(input, nextInit);
+      if ([401, 403, 404].includes(response.status)) {
+        return originalFetch("/api/dashboard", {
+          credentials: "same-origin",
+          headers: { Accept: "application/json" },
+        });
+      }
+      return response;
+    };
+  }
+
+  installDashboardFetchFallback();
+
   window.SoftwareAuth = {
     request,
     session,
