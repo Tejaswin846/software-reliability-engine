@@ -247,6 +247,44 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertIsNotNone(row)
         self.assertEqual(row["email"], "profile-fetch@example.com")
 
+    def test_cached_clerk_user_rehydrates_local_row_before_usage_write(self):
+        cached_user = {
+            "user": {
+                "id": "user_cached_clerk",
+                "email": "cached-clerk@example.com",
+                "created_at": app.now_iso(),
+            },
+            "provider": "clerk",
+        }
+        with patch.object(
+            app,
+            "verify_clerk_token",
+            return_value={"sub": "user_cached_clerk", "email": "cached-clerk@example.com"},
+        ), patch.object(app, "redis_get_session_cache", return_value=cached_user), patch.object(
+            app,
+            "redis_set_session_cache",
+            return_value=True,
+        ), patch.object(app, "supabase_upsert_user_profile", return_value={"ok": True}):
+            response = self.client.post(
+                "/api/install/api-key",
+                headers={"Authorization": "Bearer clerk-token"},
+                json={"project_name": "cached-agent"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        with app.connect() as db:
+            user = db.execute(
+                "SELECT id, email FROM users WHERE id = ?",
+                ("user_cached_clerk",),
+            ).fetchone()
+            usage_count = db.execute(
+                "SELECT COUNT(*) FROM usage_records WHERE user_id = ?",
+                ("user_cached_clerk",),
+            ).fetchone()[0]
+        self.assertIsNotNone(user)
+        self.assertEqual(user["email"], "cached-clerk@example.com")
+        self.assertGreaterEqual(usage_count, 1)
+
     def test_clerk_jwt_can_access_user_api_and_creates_user(self):
         with patch.object(
             app,

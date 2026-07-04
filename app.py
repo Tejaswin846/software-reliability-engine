@@ -2067,9 +2067,24 @@ def authenticated_user_from_token(token: str) -> Dict[str, Any]:
     except HTTPException as local_error:
         if clerk_is_configured():
             claims = verify_clerk_token(token)
-            cached_clerk = redis_get_session_cache(session_cache_id(str(claims.get("sub", ""))))
-            if cached_clerk and cached_clerk.get("user"):
-                return dict(cached_clerk["user"])
+            clerk_user_id = str(claims.get("sub") or "").strip()
+            cached_clerk = redis_get_session_cache(session_cache_id(clerk_user_id))
+            cached_user = cached_clerk.get("user") if isinstance(cached_clerk, dict) else None
+            if isinstance(cached_user, dict):
+                cached_email = str(
+                    cached_user.get("email")
+                    or claims.get("email")
+                    or claims.get("email_address")
+                    or claims.get("primary_email_address")
+                    or ""
+                ).strip()
+                if clerk_user_id and cached_email:
+                    user = ensure_external_user(clerk_user_id, cached_email)
+                    redis_set_session_cache(
+                        session_cache_id(clerk_user_id),
+                        {"user": user, "provider": "clerk"},
+                    )
+                    return user
             return ensure_clerk_user(claims)
         raise local_error
 
@@ -2077,7 +2092,12 @@ def authenticated_user_from_token(token: str) -> Dict[str, Any]:
     if cached_local and cached_local.get("user"):
         cached_user = dict(cached_local["user"])
         if str(cached_user.get("id")) == user_id:
-            return cached_user
+            init_db()
+            with connect() as db:
+                row = db.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
+            if row:
+                return row_to_dict(row)
+            redis_delete_session_cache(session_cache_id(token))
     init_db()
     with connect() as db:
         row = db.execute("SELECT id, email, created_at FROM users WHERE id = ?", (user_id,)).fetchone()
