@@ -1402,74 +1402,74 @@ body[data-nexora-surface="workspace"] > .shell > .card-list {
   font-size: 12px;
 }
 
-.runner-form {
+body > .shell .runner-form {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--nx-space-4);
 }
 
-.runner-actions {
+body > .shell .runner-actions {
   grid-column: 1 / -1;
   padding-top: var(--nx-space-2);
 }
 
-.metric-grid {
+body > .shell .metric-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--nx-space-3);
 }
 
-.metric {
+body > .shell .metric {
   display: grid;
   gap: var(--nx-space-4);
   min-width: 0;
   padding: var(--nx-space-4);
 }
 
-.metric span {
+body > .shell .metric span {
   color: var(--nx-color-muted);
   font-size: 11px;
   font-weight: 500;
 }
 
-.metric strong {
+body > .shell .metric strong {
   color: var(--nx-color-foreground);
   font-size: 26px;
   font-weight: 600;
   letter-spacing: -0.04em;
 }
 
-.metric.score {
+body > .shell .metric.score {
   border-color: var(--nx-color-primary-border);
   background: var(--nx-color-primary-soft);
 }
 
-.metric.score strong {
+body > .shell .metric.score strong {
   color: var(--nx-color-primary-hover);
 }
 
-.chart-grid {
+body > .shell .chart-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--nx-space-4);
 }
 
-.chart-card {
+body > .shell .chart-card {
   min-width: 0;
   padding: var(--nx-space-4);
 }
 
-.chart-card h3 {
+body > .shell .chart-card h3 {
   margin: 0 0 var(--nx-space-4);
   font-size: 14px;
 }
 
-.runner-chart {
+body > .shell .runner-chart {
   min-height: 210px;
   color: var(--nx-color-muted);
 }
 
-.runner-chart svg {
+body > .shell .runner-chart svg {
   width: 100%;
   height: auto;
 }
@@ -2013,12 +2013,12 @@ body:has(.apps-shell) {
     grid-column: 1;
   }
 
-  .runner-form {
+  body > .shell .runner-form {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .metric-grid,
-  .chart-grid {
+  body > .shell .metric-grid,
+  body > .shell .chart-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2094,14 +2094,14 @@ body:has(.apps-shell) {
   .site-frame .grid,
   body[data-nexora-surface="marketing"] > main .grid,
   .apps-grid,
-  .runner-form,
-  .metric-grid,
-  .chart-grid,
+  body > .shell .runner-form,
+  body > .shell .metric-grid,
+  body > .shell .chart-grid,
   .request-form {
     grid-template-columns: 1fr;
   }
 
-  .runner-actions,
+  body > .shell .runner-actions,
   .request-form .full,
   .request-form > button {
     grid-column: 1;
