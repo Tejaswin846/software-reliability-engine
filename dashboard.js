@@ -1,4 +1,5 @@
 const statusEl = document.getElementById("dashboard-status");
+const refreshButton = document.getElementById("refresh-dashboard");
 
 function byId(id) {
   return document.getElementById(id);
@@ -53,8 +54,16 @@ function formatLatency(ms) {
 
 function formatCurrencyMinorUnits(amount, currency) {
   const normalizedCurrency = String(currency || "usd").toUpperCase();
-  const major = Number(amount || 0) / 100;
-  return `${normalizedCurrency} ${formatDecimal(major, 2)}`;
+  return `${normalizedCurrency} ${formatDecimal(Number(amount || 0) / 100, 2)}`;
+}
+
+function safeExternalUrl(value) {
+  try {
+    const url = new URL(String(value || ""), window.location.origin);
+    return ["http:", "https:"].includes(url.protocol) ? url.href : "";
+  } catch (_) {
+    return "";
+  }
 }
 
 function formatDate(value) {
@@ -68,6 +77,32 @@ function formatDate(value) {
   return date.toLocaleString();
 }
 
+function clampPercent(value) {
+  return Math.min(100, Math.max(0, Number(value || 0)));
+}
+
+function scoreBand(value) {
+  const numeric = clampPercent(value);
+  if (numeric >= 90) {
+    return { className: "healthy", label: "Highly reliable", copy: "Production signals are healthy" };
+  }
+  if (numeric >= 75) {
+    return { className: "watch", label: "Monitor closely", copy: "Reliability is stable with room to improve" };
+  }
+  return { className: "risk", label: "Action needed", copy: "Reliability risks need investigation" };
+}
+
+function setDashboardStatus(message, state = "ready") {
+  const text = statusEl?.querySelector(".status-text");
+  if (text) {
+    text.textContent = message;
+  } else if (statusEl) {
+    statusEl.textContent = message;
+  }
+  statusEl?.classList.toggle("error", state === "error");
+  statusEl?.classList.toggle("loading", state === "loading");
+}
+
 function emptyMarkup(message) {
   return `<div class="empty">${escapeHtml(message)}</div>`;
 }
@@ -78,7 +113,7 @@ function barMarkup(value, maxValue = 100, kind = "") {
   const width = Math.min(100, (numeric / max) * 100);
   const className = kind ? `bar-fill ${kind}` : "bar-fill";
   return `
-    <div class="bar-track">
+    <div class="bar-track" role="progressbar" aria-label="${formatDecimal(numeric, 1)} of ${formatDecimal(max, 1)}" aria-valuemin="0" aria-valuemax="${max}" aria-valuenow="${numeric}">
       <div class="${className}" style="width: ${width}%"></div>
     </div>
   `;
@@ -90,23 +125,38 @@ function renderOverview(overview) {
   setText("success-rate", formatPercent(overview.success_rate));
   setText("failure-rate", formatPercent(overview.failure_rate));
   setText("reliability-score", formatDecimal(overview.reliability_score, 2));
-  setText("last-updated", `Last updated: ${formatDate(overview.last_updated)}`);
+  setText("last-updated", formatDate(overview.last_updated));
+
+  const score = clampPercent(overview.reliability_score);
+  const band = scoreBand(score);
+  const ring = byId("reliability-score-ring");
+  if (ring) {
+    ring.style.setProperty("--score", String(score));
+    ring.style.setProperty(
+      "--ring-color",
+      band.className === "healthy" ? "var(--teal)" : band.className === "watch" ? "var(--warning)" : "var(--danger)"
+    );
+    ring.setAttribute("aria-valuenow", String(score));
+    ring.setAttribute("aria-valuetext", `${formatDecimal(score, 2)} out of 100, ${band.label}`);
+  }
+  const badge = byId("reliability-band");
+  if (badge) {
+    badge.className = `score-badge ${band.className}`;
+    badge.textContent = band.label;
+  }
+  setText("reliability-copy", band.copy);
 }
 
 function renderRedis(redis) {
-  const status = redis?.status || "Not configured";
   const connected = Boolean(redis?.connected);
-  setText("redis-status", status);
+  setText("redis-status", redis?.status || "Not configured");
   setText("redis-latency", connected ? formatLatency(redis.latency_ms) : "--");
   setText("redis-cache-hits", formatNumber(redis?.cache_hits));
   setText("redis-cache-misses", formatNumber(redis?.cache_misses));
   setText("redis-memory", redis?.memory_usage || "Unavailable");
   setText("redis-queue-depth", formatNumber(redis?.queue_depth));
   setText("redis-hit-rate", formatPercent(redis?.cache_hit_rate));
-  const dot = byId("redis-status-dot");
-  if (dot) {
-    dot.classList.toggle("connected", connected);
-  }
+  byId("redis-status-dot")?.classList.toggle("connected", connected);
 }
 
 function formatQuota(value) {
@@ -116,46 +166,44 @@ function formatQuota(value) {
 function renderBilling(billing) {
   const invoiceList = byId("billing-invoice-list");
   if (!billing || !billing.plan) {
-    setText("billing-plan", "--");
-    setText("billing-workflows", "--");
-    setText("billing-remaining", "--");
-    setText("billing-api-requests", "--");
-    setText("billing-stripe-status", "--");
-    setText("billing-invoices", "--");
-    setText("billing-note", "Login to see project-scoped plan and usage data.");
+    ["billing-plan", "billing-workflows", "billing-remaining", "billing-api-requests", "billing-stripe-status", "billing-invoices"]
+      .forEach((id) => setText(id, "--"));
+    setText("billing-note", "Sign in to view project-scoped plan and usage data.");
     if (invoiceList) {
-      invoiceList.innerHTML = emptyMarkup("Login to view invoices.");
+      invoiceList.innerHTML = emptyMarkup("Sign in to view invoices.");
     }
     return;
   }
-  const workflowLimit = formatQuota(billing.plan.monthly_workflow_limit);
-  const workflowUsed = formatNumber(billing.usage.workflows);
+
   const invoices = billing.invoices || [];
-  const stripeStatus = billing.stripe?.status || billing.subscription?.stripe_status || (billing.stripe?.configured ? "Configured" : "Not configured");
+  const stripeStatus = billing.stripe?.status
+    || billing.subscription?.stripe_status
+    || (billing.stripe?.configured ? "Configured" : "Not configured");
   setText("billing-plan", billing.plan.name);
-  setText("billing-workflows", `${workflowUsed} / ${workflowLimit}`);
+  setText("billing-workflows", `${formatNumber(billing.usage.workflows)} / ${formatQuota(billing.plan.monthly_workflow_limit)}`);
   setText("billing-remaining", formatQuota(billing.remaining.workflows));
   setText("billing-api-requests", formatNumber(billing.usage.api_requests));
   setText("billing-stripe-status", stripeStatus);
   setText("billing-invoices", formatNumber(invoices.length));
-  setText(
-    "billing-note",
-    `${formatNumber(billing.usage.projects)} projects, ${formatNumber(billing.usage.api_keys)} active API keys this period.`
-  );
+  setText("billing-note", `${formatNumber(billing.usage.projects)} projects and ${formatNumber(billing.usage.api_keys)} active API keys this period.`);
+
   if (invoiceList) {
     invoiceList.innerHTML = invoices.length
-      ? invoices.map((invoice) => `
-          <div class="bar-row">
-            <div class="bar-label">
-              <strong>${escapeHtml(invoice.status || "invoice")}</strong>
-              <span>${escapeHtml(formatDate(invoice.created_at))}</span>
+      ? invoices.map((invoice) => {
+          const invoiceUrl = safeExternalUrl(invoice.hosted_invoice_url);
+          return `
+            <div class="bar-row">
+              <div class="bar-label">
+                <strong>${escapeHtml(invoice.status || "invoice")}</strong>
+                <span>${escapeHtml(formatDate(invoice.created_at))}</span>
+              </div>
+              <div class="muted">
+                Paid ${escapeHtml(formatCurrencyMinorUnits(invoice.amount_paid, invoice.currency))}
+                ${invoiceUrl ? ` · <a class="small-link" href="${escapeHtml(invoiceUrl)}" target="_blank" rel="noopener noreferrer">View invoice</a>` : ""}
+              </div>
             </div>
-            <div class="muted">
-              Paid ${escapeHtml(formatCurrencyMinorUnits(invoice.amount_paid, invoice.currency))}
-              ${invoice.hosted_invoice_url ? ` | <a class="small-link" href="${escapeHtml(invoice.hosted_invoice_url)}" target="_blank" rel="noopener">View invoice</a>` : ""}
-            </div>
-          </div>
-        `).join("")
+          `;
+        }).join("")
       : emptyMarkup("No invoices yet.");
   }
 }
@@ -164,10 +212,7 @@ async function billingPost(endpoint, payload = {}) {
   const response = await fetch(endpoint, {
     method: "POST",
     credentials: "same-origin",
-    headers: {
-      "Accept": "application/json",
-      "Content-Type": "application/json",
-    },
+    headers: { Accept: "application/json", "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   });
   const data = await response.json().catch(() => ({}));
@@ -178,56 +223,51 @@ async function billingPost(endpoint, payload = {}) {
 }
 
 function setBillingBusy(isBusy) {
-  const upgrade = byId("billing-upgrade-pro");
-  const portal = byId("billing-portal");
-  if (upgrade) {
-    upgrade.disabled = isBusy;
-  }
-  if (portal) {
-    portal.disabled = isBusy;
-  }
+  ["billing-upgrade-pro", "billing-portal"].forEach((id) => {
+    const button = byId(id);
+    if (button) {
+      button.disabled = isBusy;
+    }
+  });
 }
 
 function wireBillingActions() {
-  const upgrade = byId("billing-upgrade-pro");
-  const portal = byId("billing-portal");
-  if (upgrade) {
-    upgrade.addEventListener("click", async () => {
-      try {
-        setBillingBusy(true);
-        setText("billing-note", "Creating Stripe checkout session...");
-        const data = await billingPost("/api/billing/checkout", { plan_id: "pro" });
-        if (data.checkout_url) {
-          window.location.href = data.checkout_url;
-          return;
-        }
-        setText("billing-note", data.message || "Billing plan updated.");
-        loadDashboard();
-      } catch (error) {
-        setText("billing-note", error.message);
-      } finally {
-        setBillingBusy(false);
+  byId("billing-upgrade-pro")?.addEventListener("click", async () => {
+    try {
+      setBillingBusy(true);
+      setText("billing-note", "Creating Stripe checkout session...");
+      const data = await billingPost("/api/billing/checkout", { plan_id: "pro" });
+      const checkoutUrl = safeExternalUrl(data.checkout_url);
+      if (checkoutUrl) {
+        window.location.assign(checkoutUrl);
+        return;
       }
-    });
-  }
-  if (portal) {
-    portal.addEventListener("click", async () => {
-      try {
-        setBillingBusy(true);
-        setText("billing-note", "Opening Stripe billing portal...");
-        const data = await billingPost("/api/billing/portal", {});
-        if (data.portal_url) {
-          window.location.href = data.portal_url;
-          return;
-        }
-        setText("billing-note", "Stripe did not return a billing portal URL.");
-      } catch (error) {
-        setText("billing-note", error.message);
-      } finally {
-        setBillingBusy(false);
+      setText("billing-note", data.message || "Billing plan updated.");
+      await loadDashboard();
+    } catch (error) {
+      setText("billing-note", error.message);
+    } finally {
+      setBillingBusy(false);
+    }
+  });
+
+  byId("billing-portal")?.addEventListener("click", async () => {
+    try {
+      setBillingBusy(true);
+      setText("billing-note", "Opening Stripe billing portal...");
+      const data = await billingPost("/api/billing/portal", {});
+      const portalUrl = safeExternalUrl(data.portal_url);
+      if (portalUrl) {
+        window.location.assign(portalUrl);
+        return;
       }
-    });
-  }
+      setText("billing-note", "Stripe did not return a billing portal URL.");
+    } catch (error) {
+      setText("billing-note", error.message);
+    } finally {
+      setBillingBusy(false);
+    }
+  });
 }
 
 function renderTeamWorkspaces(team) {
@@ -243,11 +283,8 @@ function renderTeamWorkspaces(team) {
     orgList.innerHTML = organizations.length
       ? organizations.map((org) => `
           <div class="bar-row">
-            <div class="bar-label">
-              <strong>${escapeHtml(org.name)}</strong>
-              <span>${escapeHtml(org.role)}</span>
-            </div>
-            <div class="muted">${formatNumber(org.member_count)} members | ${formatNumber(org.invitation_count)} pending invites</div>
+            <div class="bar-label"><strong>${escapeHtml(org.name)}</strong><span>${escapeHtml(org.role)}</span></div>
+            <div class="muted">${formatNumber(org.member_count)} members · ${formatNumber(org.invitation_count)} pending invites</div>
           </div>
         `).join("")
       : emptyMarkup("No organizations yet.");
@@ -258,11 +295,8 @@ function renderTeamWorkspaces(team) {
     inviteList.innerHTML = invitations.length
       ? invitations.slice(0, 6).map((invite) => `
           <div class="bar-row">
-            <div class="bar-label">
-              <strong>${escapeHtml(invite.email)}</strong>
-              <span>${escapeHtml(invite.status)}</span>
-            </div>
-            <div class="muted">${escapeHtml(invite.organization_name || invite.organization_id)} | ${escapeHtml(invite.role)}</div>
+            <div class="bar-label"><strong>${escapeHtml(invite.email)}</strong><span>${escapeHtml(invite.status)}</span></div>
+            <div class="muted">${escapeHtml(invite.organization_name || invite.organization_id)} · ${escapeHtml(invite.role)}</div>
           </div>
         `).join("")
       : emptyMarkup("No invitations yet.");
@@ -279,27 +313,36 @@ function renderTeamWorkspaces(team) {
             <td>${formatDate(member.created_at)}</td>
           </tr>
         `).join("")
-      : `<tr><td colspan="4">No team members found.</td></tr>`;
+      : `<tr><td class="table-empty" colspan="4">No team members found.</td></tr>`;
   }
 }
 
 function renderModelLeaderboard(models) {
   const table = byId("model-table");
   if (!models.length) {
-    table.innerHTML = `<tr><td colspan="6">No model benchmark rows found.</td></tr>`;
+    table.innerHTML = `<tr><td class="table-empty" colspan="6">No model benchmark rows found.</td></tr>`;
     return;
   }
 
-  table.innerHTML = models.map((model) => `
+  table.innerHTML = models.map((model, index) => {
+    const rank = Number(model.rank || index + 1);
+    const score = clampPercent(model.reliability_score_v2);
+    return `
     <tr>
-      <td>${formatNumber(model.rank)}</td>
+      <td class="rank-cell"><span class="rank-medal ${rank === 1 ? "top" : ""}">${formatNumber(rank)}</span></td>
       <td class="model-name">${escapeHtml(model.model)}</td>
-      <td><span class="score-chip">${formatDecimal(model.reliability_score_v2, 2)}</span></td>
+      <td class="score-cell">
+        <div class="score-cell-row">
+          <span class="score-chip">${formatDecimal(score, 2)}</span>
+          <span class="inline-progress" role="progressbar" aria-label="${escapeHtml(model.model)} reliability" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${score}"><span style="width:${score}%"></span></span>
+        </div>
+      </td>
       <td>${formatPercent(model.success_rate)}</td>
       <td>${formatLatency(model.average_execution_time_ms)}</td>
       <td>${formatConfidence(model.average_confidence)}</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderToolReliability(tools) {
@@ -309,12 +352,15 @@ function renderToolReliability(tools) {
     return;
   }
 
-  grid.innerHTML = tools.map((tool) => `
+  grid.innerHTML = tools.map((tool) => {
+    const score = clampPercent(tool.reliability_score);
+    return `
     <article class="tool-card">
       <header>
         <span class="tool-name">${escapeHtml(tool.tool_name)}</span>
-        <span class="score-chip">${formatDecimal(tool.reliability_score, 2)}</span>
+        <span class="tool-score-row"><span class="score-chip">${formatDecimal(score, 2)}</span></span>
       </header>
+      <div class="tool-progress">${barMarkup(score, 100)}</div>
       <div class="mini-stats">
         <div><span>Success</span><strong>${formatPercent(tool.success_rate)}</strong></div>
         <div><span>Failure</span><strong>${formatPercent(tool.failure_rate)}</strong></div>
@@ -322,7 +368,8 @@ function renderToolReliability(tools) {
         <div><span>Timeout</span><strong>${formatPercent(tool.timeout_rate)}</strong></div>
       </div>
     </article>
-  `).join("");
+  `;
+  }).join("");
 }
 
 function renderWorkflowAnalytics(workflow) {
@@ -432,10 +479,9 @@ function renderCopilot(copilot) {
     return;
   }
   if (!recommendations.length) {
-    table.innerHTML = `<tr><td colspan="5">No Copilot recommendations found.</td></tr>`;
+    table.innerHTML = `<tr><td class="table-empty" colspan="5">No Copilot recommendations found.</td></tr>`;
     return;
   }
-
   table.innerHTML = recommendations.map((item) => {
     const evidence = (item.supporting_evidence || [])
       .slice(0, 2)
@@ -443,10 +489,7 @@ function renderCopilot(copilot) {
       .join("");
     return `
       <tr>
-        <td>
-          <span class="category-chip">${escapeHtml(item.category)}</span>
-          <div class="recommendation-issue">${escapeHtml(item.issue)}</div>
-        </td>
+        <td><span class="category-chip">${escapeHtml(item.category)}</span><div class="recommendation-issue">${escapeHtml(item.issue)}</div></td>
         <td>${escapeHtml(item.recommendation)}</td>
         <td>${formatPercent(item.estimated_success_improvement)}</td>
         <td>${formatPercent(item.confidence)}</td>
@@ -470,14 +513,14 @@ function renderOptimizer(optimizer) {
     return;
   }
   if (!history.length) {
-    table.innerHTML = `<tr><td colspan="6">No autonomous optimization actions yet.</td></tr>`;
+    table.innerHTML = `<tr><td class="table-empty" colspan="6">No autonomous optimization actions yet.</td></tr>`;
     return;
   }
   table.innerHTML = history.map((event) => `
     <tr>
       <td><span class="category-chip">${escapeHtml(event.action_type)}</span></td>
       <td>${escapeHtml(event.target)}</td>
-      <td>${escapeHtml(event.status)}</td>
+      <td><span class="table-status">${escapeHtml(event.status)}</span></td>
       <td>${formatPercent(event.estimated_success_improvement)}</td>
       <td>${formatPercent(event.confidence)}</td>
       <td>${formatDate(event.created_at)}</td>
@@ -496,41 +539,31 @@ function renderMetaReliability(meta) {
 
   const table = byId("meta-decision-table");
   if (table) {
-    if (!decisions.length) {
-      table.innerHTML = `<tr><td colspan="5">No AI decisions have been validated yet.</td></tr>`;
-    } else {
-      table.innerHTML = decisions.map((decision) => `
-        <tr>
-          <td>
-            <span class="category-chip">${escapeHtml(decision.action_type)}</span>
-            <div class="evidence-line">${escapeHtml(decision.target)}</div>
-          </td>
-          <td>${escapeHtml(decision.risk_level)}</td>
-          <td>${escapeHtml(decision.status)}</td>
-          <td>${formatPercent(decision.confidence)}</td>
-          <td>${formatDate(decision.created_at)}</td>
-        </tr>
-      `).join("");
-    }
+    table.innerHTML = decisions.length
+      ? decisions.map((decision) => `
+          <tr>
+            <td><span class="category-chip">${escapeHtml(decision.action_type)}</span><span class="evidence-line">${escapeHtml(decision.target)}</span></td>
+            <td>${escapeHtml(decision.risk_level)}</td>
+            <td><span class="table-status">${escapeHtml(decision.status)}</span></td>
+            <td>${formatPercent(decision.confidence)}</td>
+            <td>${formatDate(decision.created_at)}</td>
+          </tr>
+        `).join("")
+      : `<tr><td class="table-empty" colspan="5">No AI decisions have been validated yet.</td></tr>`;
   }
 
   const rejectedList = byId("meta-rejected-list");
   if (!rejectedList) {
     return;
   }
-  if (!rejected.length) {
-    rejectedList.innerHTML = emptyMarkup("No unsafe AI actions rejected yet.");
-    return;
-  }
-  rejectedList.innerHTML = rejected.map((decision) => `
-    <div class="bar-row">
-      <div class="bar-label">
-        <strong>${escapeHtml(decision.action_type)}</strong>
-        <span>${escapeHtml(decision.risk_level)}</span>
-      </div>
-      <div class="muted">${escapeHtml(decision.target)} | ${escapeHtml(decision.status)}</div>
-    </div>
-  `).join("");
+  rejectedList.innerHTML = rejected.length
+    ? rejected.map((decision) => `
+        <div class="bar-row">
+          <div class="bar-label"><strong>${escapeHtml(decision.action_type)}</strong><span>${escapeHtml(decision.risk_level)}</span></div>
+          <div class="muted">${escapeHtml(decision.target)} · ${escapeHtml(decision.status)}</div>
+        </div>
+      `).join("")
+    : emptyMarkup("No unsafe AI actions rejected yet.");
 }
 
 function renderHistoricalTrends(trends) {
@@ -546,9 +579,10 @@ function renderHistoricalTrends(trends) {
         <strong>${escapeHtml(trend.label)}</strong>
         <span>${formatDate(trend.created_at)}</span>
       </div>
-      <div class="bar-label">
-        <span>Reliability ${formatDecimal(trend.reliability_score, 2)}</span>
-        <span>Success ${formatPercent(trend.success_rate)} | Failure ${formatPercent(trend.failure_rate)}</span>
+      <div class="trend-metrics">
+        <span><strong>Reliability ${formatDecimal(trend.reliability_score, 2)}</strong></span>
+        <span>Success ${formatPercent(trend.success_rate)}</span>
+        <span class="failure-copy">Failure ${formatPercent(trend.failure_rate)}</span>
       </div>
       ${barMarkup(trend.reliability_score, 100)}
     </div>
@@ -563,7 +597,7 @@ function renderSdkWorkflows(sdk) {
   const table = byId("sdk-workflow-table");
   const workflows = sdk.recent_workflows || [];
   if (!workflows.length) {
-    table.innerHTML = `<tr><td colspan="7">No SDK-submitted workflows yet.</td></tr>`;
+    table.innerHTML = `<tr><td class="table-empty" colspan="7">No SDK-submitted workflows yet.</td></tr>`;
     return;
   }
 
@@ -572,11 +606,17 @@ function renderSdkWorkflows(sdk) {
     const risk = workflow.predicted_failure_probability === null || workflow.predicted_failure_probability === undefined
       ? "--"
       : formatPercent(Number(workflow.predicted_failure_probability) * 100);
+    const rawStatus = String(workflow.status || "unknown");
+    const normalizedStatus = ["success", "completed"].includes(rawStatus.toLowerCase())
+      ? "success"
+      : ["failed", "error"].includes(rawStatus.toLowerCase())
+        ? "failed"
+        : "neutral";
     return `
       <tr>
         <td class="model-name">${escapeHtml(workflow.project_name)}</td>
         <td>${escapeHtml(workflow.workflow_name)}</td>
-        <td>${escapeHtml(workflow.status)}</td>
+        <td><span class="table-status ${normalizedStatus}">${escapeHtml(rawStatus)}</span></td>
         <td>${success}</td>
         <td>${risk}</td>
         <td>${escapeHtml(workflow.guardrail_action || "--")}</td>
@@ -587,17 +627,39 @@ function renderSdkWorkflows(sdk) {
 }
 
 async function loadDashboard() {
+  setDashboardStatus("Loading telemetry...", "loading");
+  refreshButton?.classList.add("loading");
+  if (refreshButton) {
+    refreshButton.disabled = true;
+  }
   try {
-    const response = await fetch("/api/me/dashboard", {
-      credentials: "same-origin",
-      headers: {
-        Accept: "application/json",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(`Dashboard API returned ${response.status}`);
+    let payload;
+    if (window.SoftwareAuth?.request) {
+      try {
+        payload = await window.SoftwareAuth.request("/api/me/dashboard");
+      } catch (error) {
+        if (![401, 403, 404].includes(Number(error.status))) {
+          throw error;
+        }
+      }
+    } else {
+      const scopedResponse = await fetch("/api/me/dashboard", {
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (scopedResponse.ok) {
+        payload = await scopedResponse.json();
+      } else if (![401, 403, 404].includes(scopedResponse.status)) {
+        throw new Error(`Dashboard API returned ${scopedResponse.status}`);
+      }
     }
-    const payload = await response.json();
+    if (!payload) {
+      const response = await fetch("/api/dashboard", { headers: { Accept: "application/json" } });
+      if (!response.ok) {
+        throw new Error(`Dashboard API returned ${response.status}`);
+      }
+      payload = await response.json();
+    }
     renderOverview(payload.overview || {});
     renderRedis(payload.redis || {});
     renderTeamWorkspaces(payload.team_workspaces || {});
@@ -613,13 +675,64 @@ async function loadDashboard() {
     renderHistoricalTrends(payload.historical_trends || []);
     renderBilling(payload.billing || null);
     renderSdkWorkflows(payload.sdk_workflows || {});
-    statusEl.textContent = "Project-scoped data loaded";
-    statusEl.classList.remove("error");
+    setDashboardStatus("Systems operational", "ready");
   } catch (error) {
-    statusEl.textContent = `Dashboard error: ${error.message}`;
-    statusEl.classList.add("error");
+    setDashboardStatus(`Dashboard error: ${error.message}`, "error");
+  } finally {
+    refreshButton?.classList.remove("loading");
+    if (refreshButton) {
+      refreshButton.disabled = false;
+    }
   }
 }
 
+refreshButton?.addEventListener("click", loadDashboard);
+
+document.querySelectorAll(".side-nav a[href^='#']").forEach((link) => {
+  link.addEventListener("click", () => {
+    document.querySelectorAll(".side-nav .nav-link").forEach((item) => item.classList.remove("active"));
+    link.classList.add("active");
+    if (window.innerWidth < 1080) {
+      if (window.HSOverlay) {
+        window.HSOverlay.close("#reliability-sidebar");
+      } else {
+        const sidebar = byId("reliability-sidebar");
+        sidebar?.classList.remove("open", "opened");
+        sidebar?.classList.add("hidden");
+      }
+    }
+  });
+});
+
+function initializePrelineFallbacks() {
+  if (!window.HSOverlay) {
+    const sidebar = byId("reliability-sidebar");
+    document.querySelectorAll('[data-hs-overlay="#reliability-sidebar"]').forEach((toggle) => {
+      toggle.addEventListener("click", () => {
+        const isOpen = sidebar?.classList.contains("open");
+        sidebar?.classList.toggle("hidden", isOpen);
+        sidebar?.classList.toggle("open", !isOpen);
+        sidebar?.classList.toggle("opened", !isOpen);
+        toggle.setAttribute("aria-expanded", String(!isOpen));
+      });
+    });
+  }
+
+  if (!window.HSAccordion) {
+    document.querySelectorAll(".hs-accordion-toggle").forEach((toggle) => {
+      toggle.addEventListener("click", () => {
+        const accordion = toggle.closest(".hs-accordion");
+        const contentId = toggle.getAttribute("aria-controls");
+        const content = contentId ? byId(contentId) : null;
+        const isOpen = accordion?.classList.contains("active");
+        accordion?.classList.toggle("active", !isOpen);
+        content?.classList.toggle("hidden", isOpen);
+        toggle.setAttribute("aria-expanded", String(!isOpen));
+      });
+    });
+  }
+}
+
+initializePrelineFallbacks();
 wireBillingActions();
 loadDashboard();

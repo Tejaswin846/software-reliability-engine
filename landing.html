@@ -3,171 +3,353 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Software - AI Agent Reliability Platform</title>
+    <meta name="theme-color" content="#07111f">
+    <meta name="description" content="Nexora helps engineering teams benchmark, monitor, and recover production AI agents with evidence they can trust.">
+    <title>Nexora | Reliability infrastructure for production AI</title>
     <link rel="stylesheet" href="/landing.css">
   </head>
   <body>
-    <div class="site-frame">
-      <header class="topbar">
-        <a class="brand" href="/">
-          <span class="brand-mark">S</span>
-          <span>Software<span class="brand-plus">+</span></span>
-        </a>
-        <nav class="nav" aria-label="Primary navigation">
-          <a href="#features">Features</a>
-          <a href="/pricing">Pricing</a>
-          <a href="/developer-docs">Resources</a>
-          <a href="/install">Tools</a>
-          <a href="#about">About</a>
-          <button type="button" class="ghost icon" aria-label="Toggle theme">o</button>
-          <button type="button" class="ghost" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Log in</button>
-          <button type="button" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Get Started <span aria-hidden="true">-></span></button>
-          <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Account</button>
-          <button type="button" class="ghost" data-clerk-sign-out data-auth-signed-in>Log out</button>
-        </nav>
-      </header>
+    <a class="skip-link" href="#main-content">Skip to main content</a>
 
-      <main>
-        <section class="hero">
+    <div class="announcement" role="status">
+      <span class="announcement-dot" aria-hidden="true"></span>
+      <span>Reliability Control Center is live</span>
+      <a href="/dashboard">Explore the dashboard <span aria-hidden="true">&rarr;</span></a>
+    </div>
+
+    <header class="site-header">
+      <div class="nav-shell">
+        <a class="brand" href="/" aria-label="Nexora home">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span class="brand-copy">
+            <strong>Nexora<span class="brand-plus" aria-hidden="true">+</span></strong>
+            <small>Reliability cloud</small>
+          </span>
+        </a>
+
+        <nav class="desktop-nav" aria-label="Primary navigation">
+          <a href="#platform">Platform</a>
+          <a href="#workflow">How it works</a>
+          <a href="/benchmarks">Benchmarks</a>
+          <a href="/developer-docs">Docs</a>
+          <a href="/pricing">Pricing</a>
+        </nav>
+
+        <div class="desktop-actions">
+          <button type="button" class="text-button" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Sign in</button>
+          <button type="button" class="button button-primary button-small" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">
+            Start building <span aria-hidden="true">&rarr;</span>
+          </button>
+          <a class="button button-primary button-small" href="/dashboard" data-auth-signed-in>Open dashboard</a>
+          <button type="button" class="text-button" data-clerk-user-profile data-auth-signed-in>Account</button>
+        </div>
+
+        <button
+          type="button"
+          class="mobile-menu-button"
+          aria-label="Open navigation"
+          aria-controls="mobile-navigation"
+          aria-expanded="false"
+          data-hs-overlay="#mobile-navigation"
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <aside
+      id="mobile-navigation"
+      class="mobile-navigation hs-overlay hidden"
+      role="dialog"
+      tabindex="-1"
+      aria-label="Mobile navigation"
+      data-hs-overlay-options='{"backdropClasses":"hs-overlay-backdrop"}'
+    >
+      <div class="mobile-navigation-head">
+        <a class="brand" href="/">
+          <span class="brand-mark" aria-hidden="true">N</span>
+          <span class="brand-copy"><strong>Nexora<span class="brand-plus" aria-hidden="true">+</span></strong><small>Reliability cloud</small></span>
+        </a>
+        <button type="button" class="mobile-menu-button" aria-label="Close navigation" data-hs-overlay="#mobile-navigation">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <nav class="mobile-nav-links" aria-label="Mobile primary navigation">
+        <a href="#platform" data-hs-overlay="#mobile-navigation">Platform <span aria-hidden="true">&rarr;</span></a>
+        <a href="#workflow" data-hs-overlay="#mobile-navigation">How it works <span aria-hidden="true">&rarr;</span></a>
+        <a href="/benchmarks">Benchmarks <span aria-hidden="true">&rarr;</span></a>
+        <a href="/developer-docs">Documentation <span aria-hidden="true">&rarr;</span></a>
+        <a href="/pricing">Pricing <span aria-hidden="true">&rarr;</span></a>
+      </nav>
+      <div class="mobile-nav-actions">
+        <button type="button" class="button button-secondary" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Sign in</button>
+        <button type="button" class="button button-primary" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Start building</button>
+        <a class="button button-primary" href="/dashboard" data-auth-signed-in>Open dashboard</a>
+        <button type="button" class="button button-secondary" data-clerk-user-profile data-auth-signed-in>Manage account</button>
+      </div>
+    </aside>
+
+    <main id="main-content">
+      <section class="hero">
+        <div class="section-shell hero-grid">
           <div class="hero-copy">
-            <p class="eyebrow">Built for reliable AI workflows</p>
-            <h1>Get clear signals for every <span class="accent-text">agent workflow</span> before it reaches users</h1>
-            <p class="lead">
-              Software helps teams test, monitor, and improve AI agents with workflow telemetry, dry-run safety checks,
-              memory context, tool reliability, recovery suggestions, and audit-ready evidence.
+            <p class="eyebrow"><span aria-hidden="true"></span> Reliability infrastructure for production AI</p>
+            <h1>Ship AI agents<br>you can <em>trust.</em></h1>
+            <p class="hero-lead">
+              See every model call, tool decision, and recovery path. Nexora turns agent behavior into measurable reliability—before your users find the failures.
             </p>
             <div class="hero-actions">
-              <button type="button" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Start free <span aria-hidden="true">-></span></button>
-              <a class="button secondary" href="/install">Install SDK</a>
-              <button type="button" class="secondary" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Sign in</button>
-              <a class="button secondary" href="/dashboard" data-auth-signed-in>Open Dashboard</a>
+              <button type="button" class="button button-accent" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">
+                Start testing free
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>
+              </button>
+              <a class="button button-dark-secondary" href="/demo">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 7 8 5-8 5V7Z"/></svg>
+                Watch the demo
+              </a>
+              <a class="button button-accent" href="/dashboard" data-auth-signed-in>Open control center</a>
             </div>
-            <ul class="micro-list" aria-label="Setup notes">
-              <li>No credit card required</li>
-              <li>SDK install works without login</li>
-              <li>Cloud features use Clerk auth</li>
+            <ul class="hero-notes" aria-label="Product highlights">
+              <li><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg>No credit card</li>
+              <li><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg>SDK works locally</li>
+              <li><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg>Dry-run by default</li>
             </ul>
           </div>
 
-          <div class="hero-visual" aria-label="Software workflow preview">
-            <div class="phone-shell">
-              <div class="phone-notch"></div>
-              <div class="phone-screen">
-                <div class="phone-top">
-                  <div>
-                    <p class="muted">Good morning,</p>
-                    <h3>Agent plan for today</h3>
-                  </div>
-                  <span class="avatar">AI</span>
-                </div>
-
-                <div class="progress-card">
-                  <div>
-                    <strong>Great progress</strong>
-                    <p class="muted">Your workflows passed safety gates.</p>
-                  </div>
-                  <div><strong>12</strong><p class="muted">dry-runs</p></div>
-                </div>
-
-                <div class="snapshot-card">
-                  <div class="row">
-                    <h3>Reliability snapshot</h3>
-                    <span class="muted">Updated now</span>
-                  </div>
-                  <div class="snapshot-grid">
-                    <div class="snapshot-item">
-                      <span class="snapshot-icon">M</span>
-                      <strong>Memory</strong>
-                      <p class="muted">Level 3</p>
-                    </div>
-                    <div class="snapshot-item">
-                      <span class="snapshot-icon">T</span>
-                      <strong>Tools</strong>
-                      <p class="muted">Level 4</p>
-                    </div>
-                    <div class="snapshot-item">
-                      <span class="snapshot-icon">S</span>
-                      <strong>Safety</strong>
-                      <p class="muted">Level 5</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div class="match-card">
-                  <div>
-                    <h3>Reliability score</h3>
-                    <p class="muted">Workflow has the required checks.</p>
-                  </div>
-                  <div class="score-ring">95%</div>
-                </div>
-
-                <div class="task-row">
-                  <span class="avatar">G</span>
-                  <div>
-                    <strong>Gmail dry-run</strong>
-                    <p class="muted">No real email sent</p>
-                  </div>
-                  <span class="pill">safe</span>
-                </div>
-                <div class="task-row">
-                  <span class="avatar">DB</span>
-                  <div>
-                    <strong>Delete-data request</strong>
-                    <p class="muted">Blocked before execution</p>
-                  </div>
-                  <span class="pill">blocked</span>
-                </div>
+          <div class="hero-console" aria-label="Example live reliability run">
+            <div class="console-toolbar">
+              <div class="console-title">
+                <span class="console-logo" aria-hidden="true">N</span>
+                <span><strong>Checkout agent</strong><small>Production / live run</small></span>
               </div>
+              <span class="live-status"><span aria-hidden="true"></span>Live</span>
+            </div>
+
+            <div class="console-summary">
+              <div class="score-gauge" aria-label="Reliability score 94">
+                <span><strong>94</strong><small>/100</small></span>
+              </div>
+              <div class="score-copy">
+                <span class="score-label">Reliability score</span>
+                <strong>Production ready</strong>
+                <p>All critical guardrails passed.</p>
+              </div>
+              <span class="trend-badge">+6.2%</span>
+            </div>
+
+            <div class="trace-panel">
+              <div class="trace-head">
+                <span>Execution trace</span>
+                <code>run_84f2a</code>
+              </div>
+              <ol class="trace-list">
+                <li class="trace-complete">
+                  <span class="trace-node"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span>
+                  <span class="trace-name"><strong>Intent classified</strong><small>Confidence 98.7%</small></span>
+                  <time>42ms</time>
+                </li>
+                <li class="trace-complete">
+                  <span class="trace-node"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 12 4 4 8-9"/></svg></span>
+                  <span class="trace-name"><strong>Inventory tool called</strong><small>Result schema valid</small></span>
+                  <time>184ms</time>
+                </li>
+                <li class="trace-protected">
+                  <span class="trace-node"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.7 2.8 8 7 10 4.2-2 7-5.3 7-10V6l-7-3Z"/></svg></span>
+                  <span class="trace-name"><strong>Payment action gated</strong><small>Approval policy applied</small></span>
+                  <span class="protected-badge">Protected</span>
+                </li>
+                <li class="trace-active">
+                  <span class="trace-node"><span></span></span>
+                  <span class="trace-name"><strong>Response synthesized</strong><small>Checking output quality</small></span>
+                  <time>Now</time>
+                </li>
+              </ol>
+            </div>
+
+            <div class="console-foot">
+              <div><span class="metric-icon metric-icon-model" aria-hidden="true">M</span><span><small>Model</small><strong>99.2%</strong></span></div>
+              <div><span class="metric-icon metric-icon-tools" aria-hidden="true">T</span><span><small>Tools</small><strong>97.8%</strong></span></div>
+              <div><span class="metric-icon metric-icon-guard" aria-hidden="true">G</span><span><small>Guardrails</small><strong>100%</strong></span></div>
             </div>
           </div>
-        </section>
+        </div>
+      </section>
 
-        <section id="features" class="section">
-          <div class="section-head">
-            <p class="eyebrow">Capabilities</p>
-            <h2>Everything needed to test real AI workflow operations</h2>
-            <p class="lead">Use Software locally without signing in, then connect protected cloud features only when a project needs shared state, integrations, and audit logs.</p>
-          </div>
-          <div class="grid">
-            <article class="feature-card"><h3>Public SDK install</h3><p>Install with pip or npm, read docs, run local validation, and try sandbox workflows without an account.</p></article>
-            <article class="feature-card"><h3>Clerk authentication</h3><p>Sign-up, login, password reset, email verification, Google OAuth, GitHub OAuth, sessions, and account management run through Clerk.</p></article>
-            <article class="feature-card"><h3>Safe execution gates</h3><p>Risky actions dry-run by default, high-risk work requires confirmation, and unsafe database or delete operations are blocked.</p></article>
-            <article class="feature-card"><h3>Tool reliability</h3><p>Track model calls, tool calls, latency, confidence, failure reasons, and recovery attempts across external AI agents.</p></article>
-            <article class="feature-card"><h3>User isolation</h3><p>Projects, workflows, memory, audit logs, API keys, and settings are scoped to the Clerk user id.</p></article>
-            <article class="feature-card"><h3>Audit-ready reports</h3><p>Keep durable events for successful safe actions, blocked actions, timeline entries, and final reliability scores.</p></article>
-          </div>
-        </section>
+      <section class="stack-strip" aria-label="Reliability coverage">
+        <div class="section-shell stack-content">
+          <p>One reliability layer across your agent stack</p>
+          <ul>
+            <li><span aria-hidden="true">01</span> Models</li>
+            <li><span aria-hidden="true">02</span> Tools</li>
+            <li><span aria-hidden="true">03</span> Memory</li>
+            <li><span aria-hidden="true">04</span> Workflows</li>
+            <li><span aria-hidden="true">05</span> Guardrails</li>
+          </ul>
+        </div>
+      </section>
 
-        <section id="about" class="section">
-          <div class="metrics-strip">
-            <article class="metric-card"><span class="muted">Safety mode</span><strong>Dry-run</strong></article>
-            <article class="metric-card"><span class="muted">Protected auth</span><strong>Clerk</strong></article>
-            <article class="metric-card"><span class="muted">Memory layer</span><strong>Qdrant</strong></article>
-            <article class="metric-card"><span class="muted">Test state</span><strong>Redis</strong></article>
+      <section id="platform" class="section platform-section">
+        <div class="section-shell">
+          <div class="section-intro split-intro">
+            <div>
+              <p class="section-kicker">The reliability control plane</p>
+              <h2>Know exactly where your agents break.</h2>
+            </div>
+            <p>Move from scattered logs and one-off tests to a clear operational picture. Nexora connects signals across models, tools, memory, safety policies, and recovery attempts.</p>
           </div>
-        </section>
 
-        <section class="section">
-          <div class="section-head">
-            <p class="eyebrow">Start</p>
-            <h2>Install publicly, connect cloud later</h2>
+          <div class="feature-grid">
+            <article class="feature-card feature-card-large">
+              <div class="feature-icon feature-icon-teal">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 19V5m0 14h16M7 15l4-4 3 2 5-6"/></svg>
+              </div>
+              <span class="feature-number">01 / OBSERVE</span>
+              <h3>See the whole execution, not just the error.</h3>
+              <p>Trace model calls, tool latency, confidence, memory lookups, and failure reasons in one live timeline.</p>
+              <div class="mini-chart" aria-label="Example reliability trend improving across seven runs">
+                <div class="chart-scale"><span>100</span><span>75</span><span>50</span></div>
+                <svg viewBox="0 0 520 150" preserveAspectRatio="none" aria-hidden="true">
+                  <path class="chart-grid" d="M0 20h520M0 75h520M0 130h520"/>
+                  <path class="chart-line" d="M0 118 70 103 145 109 220 74 295 82 370 46 445 53 520 25"/>
+                  <circle cx="520" cy="25" r="5"/>
+                </svg>
+                <div class="chart-caption"><span>Run 01</span><span>Run 08</span></div>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon feature-icon-blue">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5h16v14H4V5Zm4 4h8M8 13h5"/></svg>
+              </div>
+              <span class="feature-number">02 / BENCHMARK</span>
+              <h3>Compare every model on your workload.</h3>
+              <p>Run repeatable evaluations and rank models by quality, latency, cost, recovery, and real tool success.</p>
+              <div class="benchmark-list" aria-label="Example model comparison">
+                <div><span><i class="rank rank-first">1</i>Model A</span><strong>96.4</strong></div>
+                <div><span><i class="rank">2</i>Model B</span><strong>91.8</strong></div>
+                <div><span><i class="rank">3</i>Model C</span><strong>87.2</strong></div>
+              </div>
+            </article>
+
+            <article class="feature-card">
+              <div class="feature-icon feature-icon-amber">
+                <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3 5 6v5c0 4.7 2.8 8 7 10 4.2-2 7-5.3 7-10V6l-7-3Zm-3 9 2 2 4-5"/></svg>
+              </div>
+              <span class="feature-number">03 / PROTECT</span>
+              <h3>Stop unsafe actions before execution.</h3>
+              <p>Dry-run risky work, require confirmation, and enforce policy gates for destructive or sensitive operations.</p>
+              <div class="policy-card">
+                <div class="policy-head"><span><i></i>Safety gate active</span><small>POL-024</small></div>
+                <strong>Delete customer records</strong>
+                <p>Action blocked pending human approval.</p>
+                <div class="policy-actions"><span>Blocked</span><button type="button" tabindex="-1">Review decision</button></div>
+              </div>
+            </article>
+
+            <article class="feature-card feature-card-wide">
+              <div class="recovery-copy">
+                <div class="feature-icon feature-icon-violet">
+                  <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
+                </div>
+                <span class="feature-number">04 / RECOVER</span>
+                <h3>Turn failures into the next best action.</h3>
+                <p>Surface likely causes, recovery options, and AI-assisted recommendations while keeping operators in control.</p>
+                <a class="text-link" href="/failure-analysis">Explore failure analysis <span aria-hidden="true">&rarr;</span></a>
+              </div>
+              <div class="recovery-panel">
+                <div class="recovery-panel-head"><span>Recovery recommendation</span><small>High confidence</small></div>
+                <div class="recovery-alert"><span>!</span><div><strong>Tool timeout detected</strong><p>crm.lookup exceeded its 2,000ms threshold.</p></div></div>
+                <ol>
+                  <li><span>1</span><div><strong>Retry with cached context</strong><small>Estimated recovery: 420ms</small></div><b>Recommended</b></li>
+                  <li><span>2</span><div><strong>Switch to fallback tool</strong><small>Estimated recovery: 680ms</small></div></li>
+                </ol>
+              </div>
+            </article>
           </div>
-          <div class="code-block">pip install software-sdk
-npm install software-sdk
+        </div>
+      </section>
 
-# optional cloud mode
-software login
-SOFTWARE_API_KEY=sw_your_key</div>
-          <div class="hero-actions">
-            <a class="button" href="/install">Open SDK install</a>
-            <button type="button" class="secondary" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Create cloud account</button>
-            <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Manage account</button>
+      <section id="workflow" class="section workflow-section">
+        <div class="section-shell workflow-grid">
+          <div class="workflow-copy">
+            <p class="section-kicker section-kicker-light">From SDK to signal</p>
+            <h2>Start in minutes.<br>Improve every run.</h2>
+            <p>Instrument once, then use the same evidence to test before release and monitor after deployment.</p>
+            <a class="button button-accent" href="/install">Install the SDK <span aria-hidden="true">&rarr;</span></a>
           </div>
-        </section>
-      </main>
+          <ol class="workflow-steps">
+            <li>
+              <span class="step-number">01</span>
+              <div><h3>Connect your agent</h3><p>Add the Python or JavaScript SDK around your existing workflow. No architecture rewrite required.</p></div>
+              <code>pip install software-sdk</code>
+            </li>
+            <li>
+              <span class="step-number">02</span>
+              <div><h3>Run real scenarios safely</h3><p>Replay workflows, compare models, and validate risky actions in dry-run mode.</p></div>
+              <span class="step-status"><i></i>Evaluation running</span>
+            </li>
+            <li>
+              <span class="step-number">03</span>
+              <div><h3>Ship with evidence</h3><p>Use scores, traces, guardrail decisions, and audit-ready reports to release with confidence.</p></div>
+              <span class="step-score"><strong>94</strong> reliability</span>
+            </li>
+          </ol>
+        </div>
+      </section>
 
-      <footer class="footer">Software - reliability infrastructure for AI agents</footer>
-    </div>
-    <script src="/auth.js"></script>
+      <section class="section proof-section">
+        <div class="section-shell">
+          <div class="section-intro centered-intro">
+            <p class="section-kicker">One source of truth</p>
+            <h2>Reliability your whole team can act on.</h2>
+            <p>Engineering gets traces. Product gets trends. Security gets policy evidence. Everyone works from the same run.</p>
+          </div>
+          <div class="proof-grid">
+            <article><strong>6</strong><span>reliability dimensions measured per workflow</span></article>
+            <article><strong>1</strong><span>timeline across models, tools, memory, and recovery</span></article>
+            <article><strong>0</strong><span>real-world side effects while dry-run mode is active</span></article>
+          </div>
+        </div>
+      </section>
+
+      <section class="cta-section">
+        <div class="section-shell cta-card">
+          <div>
+            <p class="section-kicker section-kicker-light">Ready when your agents are</p>
+            <h2>Make reliability a release requirement.</h2>
+            <p>Start with the public SDK, then connect the cloud control center when your team needs shared telemetry and governance.</p>
+          </div>
+          <div class="cta-actions">
+            <button type="button" class="button button-accent" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Create a free account <span aria-hidden="true">&rarr;</span></button>
+            <a class="button button-dark-secondary" href="/developer-docs">Read the docs</a>
+            <a class="button button-accent" href="/dashboard" data-auth-signed-in>Open dashboard <span aria-hidden="true">&rarr;</span></a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="section-shell footer-grid">
+        <div class="footer-brand">
+          <a class="brand brand-on-dark" href="/">
+            <span class="brand-mark" aria-hidden="true">N</span>
+            <span class="brand-copy"><strong>Nexora<span class="brand-plus" aria-hidden="true">+</span></strong><small>Reliability cloud</small></span>
+          </a>
+          <p>Operational evidence for safer, more dependable AI systems.</p>
+        </div>
+        <div class="footer-links"><strong>Product</strong><a href="#platform">Platform</a><a href="/benchmarks">Benchmarks</a><a href="/pricing">Pricing</a><a href="/dashboard">Dashboard</a></div>
+        <div class="footer-links"><strong>Developers</strong><a href="/install">Install SDK</a><a href="/developer-docs">Documentation</a><a href="/sdk">SDK tools</a><a href="/demo">Demo</a></div>
+        <div class="footer-links"><strong>Account</strong><button type="button" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/dashboard">Sign in</button><button type="button" data-clerk-sign-up data-auth-signed-out data-auth-redirect="/projects">Create account</button><button type="button" data-clerk-user-profile data-auth-signed-in>Manage account</button><button type="button" data-clerk-sign-out data-auth-signed-in>Sign out</button></div>
+      </div>
+      <div class="section-shell footer-bottom"><span>&copy; 2026 Nexora Software Reliability Engine</span><span>Built for production AI teams</span></div>
+    </footer>
+
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/preline@4.2.0/dist/preline.js"
+      integrity="sha384-M+DWVxoNTdq5vXqjFd29i81aQCysDay6kFWJL4/+9PYBMEnbkeBPRzTkXbgXE4zl"
+      crossorigin="anonymous"
+    ></script>
+    <script defer src="/auth.js"></script>
   </body>
 </html>

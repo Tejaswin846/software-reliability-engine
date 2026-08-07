@@ -5324,6 +5324,8 @@ def dashboard_asset_check() -> Dict[str, Any]:
     assets = {
         "landing.html": BASE_DIR / "landing.html",
         "landing.css": BASE_DIR / "landing.css",
+        "nexora-ui.css": BASE_DIR / "nexora-ui.css",
+        "nexora-ui.js": BASE_DIR / "nexora-ui.js",
         "pricing.html": BASE_DIR / "pricing.html",
         "demo.html": BASE_DIR / "demo.html",
         "onboarding.html": BASE_DIR / "onboarding.html",
@@ -5566,13 +5568,28 @@ async def inject_clarity_loader(request: Request, call_next):
     async for chunk in response.body_iterator:
         chunks.append(chunk.encode("utf-8") if isinstance(chunk, str) else chunk)
     body = b"".join(chunks)
+    head_assets = [
+        b'<link rel="preconnect" href="https://fonts.googleapis.com">',
+        b'<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
+        b'<link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet">',
+        b'<link rel="stylesheet" href="/nexora-ui.css">',
+    ]
     scripts = [
+        b'<script defer src="https://cdn.jsdelivr.net/npm/preline@4.2.0/dist/preline.js" integrity="sha384-M+DWVxoNTdq5vXqjFd29i81aQCysDay6kFWJL4/+9PYBMEnbkeBPRzTkXbgXE4zl" crossorigin="anonymous"></script>',
+        b'<script defer src="/nexora-ui.js"></script>',
         b'<script src="/integration_prompt.js"></script>',
         b'<script src="/ai_confirmation.js"></script>',
     ]
     if CLARITY_PROJECT_ID:
         scripts.append(b'<script src="/clarity.js"></script>')
+    for marker in head_assets:
+        if marker not in body:
+            body = body.replace(b"</head>", marker + b"</head>", 1)
     for marker in scripts:
+        if b"preline@4.2.0" in marker and b"preline@4.2.0" in body:
+            continue
+        if b'/nexora-ui.js' in marker and b'/nexora-ui.js' in body:
+            continue
         if marker not in body:
             body = body.replace(b"</head>", marker + b"</head>", 1)
 
@@ -5770,6 +5787,16 @@ def clarity_script() -> Response:
 @app.get("/landing.css", include_in_schema=False)
 def landing_styles() -> FileResponse:
     return FileResponse(BASE_DIR / "landing.css")
+
+
+@app.get("/nexora-ui.css", include_in_schema=False)
+def nexora_ui_styles() -> FileResponse:
+    return FileResponse(BASE_DIR / "nexora-ui.css")
+
+
+@app.get("/nexora-ui.js", include_in_schema=False)
+def nexora_ui_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "nexora-ui.js")
 
 
 @app.get("/validation.js", include_in_schema=False)
