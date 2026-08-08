@@ -5716,6 +5716,11 @@ def landing_page() -> FileResponse:
     return FileResponse(BASE_DIR / "landing.html")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> Response:
+    return Response(status_code=204)
+
+
 @app.get("/clarity.js", include_in_schema=False)
 def clarity_script() -> Response:
     project_id = json.dumps(CLARITY_PROJECT_ID)
