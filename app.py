@@ -5338,6 +5338,8 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "dashboard.html": BASE_DIR / "dashboard.html",
         "dashboard.css": BASE_DIR / "dashboard.css",
         "dashboard.js": BASE_DIR / "dashboard.js",
+        "ui.css": BASE_DIR / "ui.css",
+        "ui.js": BASE_DIR / "ui.js",
         "docs.css": BASE_DIR / "docs.css",
         "docs/index.html": BASE_DIR / "docs" / "index.html",
         "docs/quick-start.html": BASE_DIR / "docs" / "quick-start.html",
@@ -5863,6 +5865,16 @@ def dashboard_styles() -> FileResponse:
 @app.get("/dashboard.js", include_in_schema=False)
 def dashboard_script() -> FileResponse:
     return FileResponse(BASE_DIR / "dashboard.js")
+
+
+@app.get("/ui.css", include_in_schema=False)
+def shared_ui_styles() -> FileResponse:
+    return FileResponse(BASE_DIR / "ui.css", media_type="text/css")
+
+
+@app.get("/ui.js", include_in_schema=False)
+def shared_ui_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "ui.js", media_type="application/javascript")
 
 
 @app.get("/auth.js", include_in_schema=False)
