@@ -34,6 +34,10 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: SOFTWARE_EXECUTION_CONTROL_BACKEND
+        value: auto
+      - key: SOFTWARE_EXECUTION_CONTROL_SUPABASE_READY
+        value: "false"
       - key: CLARITY_PROJECT_ID
         value: xc0zbrjy3z
       - key: QDRANT_URL

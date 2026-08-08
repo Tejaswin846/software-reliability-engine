@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+import os
 import re
+import socket
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
+from .control_plane import (
+    ControlPlaneError,
+    ExecutionCancelled,
+    ExecutionLease,
+    IdempotencyConflict,
+    LeaseConflict,
+    StaleFence,
+    create_execution_control_plane,
+)
 from .risk_adaptive import evaluate_verification
 from .storage import (
     append_audit_event,
@@ -19,7 +31,6 @@ from .storage import (
     save_request,
     verification_metrics,
 )
-
 
 INTENTS = {
     "answer_question",
@@ -55,14 +66,10 @@ SECRET_KEY_PARTS = (
 SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
     re.compile(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
-    re.compile(
-        r"(?i)\b(api[-_ ]?key|password|secret|token)\s*[=:]\s*[^\s,;]+"
-    ),
+    re.compile(r"(?i)\b(api[-_ ]?key|password|secret|token)\s*[=:]\s*[^\s,;]+"),
 )
 
-EMAIL_PATTERN = re.compile(
-    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b"
-)
+EMAIL_PATTERN = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 DATE_PATTERN = re.compile(
     r"\b(?:20\d{2}-\d{2}-\d{2})(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2})?)?\b"
 )
@@ -80,7 +87,7 @@ def _contains_any(text: str, phrases: tuple[str, ...]) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
-def classify_intent(request_text: str, action: Optional[Dict[str, Any]] = None) -> str:
+def classify_intent(request_text: str, action: dict[str, Any] | None = None) -> str:
     text = request_text.lower()
     action = action or {}
     explicit = _normalized_text(action.get("intent")).lower()
@@ -179,7 +186,7 @@ def classify_intent(request_text: str, action: Optional[Dict[str, Any]] = None) 
 def detect_risk_level(
     intent: str,
     request_text: str,
-    action: Optional[Dict[str, Any]] = None,
+    action: dict[str, Any] | None = None,
 ) -> str:
     text = request_text.lower()
     action = action or {}
@@ -213,7 +220,7 @@ def detect_risk_level(
     return "low_risk"
 
 
-def _extract_recipient(request_text: str, action: Dict[str, Any]) -> Optional[str]:
+def _extract_recipient(request_text: str, action: dict[str, Any]) -> str | None:
     for key in ("recipient", "to", "email"):
         value = _normalized_text(action.get(key))
         if value:
@@ -222,7 +229,7 @@ def _extract_recipient(request_text: str, action: Dict[str, Any]) -> Optional[st
     return match.group(0) if match else None
 
 
-def _extract_date_time(request_text: str, action: Dict[str, Any]) -> Optional[str]:
+def _extract_date_time(request_text: str, action: dict[str, Any]) -> str | None:
     for key in ("date_time", "datetime", "start_time", "start", "date"):
         value = _normalized_text(action.get(key))
         if value:
@@ -231,8 +238,10 @@ def _extract_date_time(request_text: str, action: Dict[str, Any]) -> Optional[st
     return match.group(0) if match else None
 
 
-def _target_app(intent: str, request_text: str, action: Dict[str, Any]) -> Optional[str]:
-    explicit = _normalized_text(action.get("app_id") or action.get("target_app")).lower()
+def _target_app(intent: str, request_text: str, action: dict[str, Any]) -> str | None:
+    explicit = _normalized_text(
+        action.get("app_id") or action.get("target_app")
+    ).lower()
     if explicit:
         return explicit.replace("_", "-").replace(" ", "-")
     text = request_text.lower()
@@ -251,7 +260,7 @@ def _target_app(intent: str, request_text: str, action: Dict[str, Any]) -> Optio
     return None
 
 
-def _default_tool_slug(intent: str, target_app: Optional[str]) -> Optional[str]:
+def _default_tool_slug(intent: str, target_app: str | None) -> str | None:
     if intent == "send_email":
         return "OUTLOOK_SEND_EMAIL" if target_app == "outlook" else "GMAIL_SEND_EMAIL"
     if intent == "create_calendar_event":
@@ -265,17 +274,17 @@ def _default_tool_slug(intent: str, target_app: Optional[str]) -> Optional[str]:
 
 def create_plan(
     request_text: str,
-    action: Optional[Dict[str, Any]] = None,
-) -> Dict[str, Any]:
+    action: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     details = dict(action or {})
     intent = classify_intent(request_text, details)
     risk_level = detect_risk_level(intent, request_text, details)
     target_app = _target_app(intent, request_text, details)
     recipient = _extract_recipient(request_text, details)
     date_time = _extract_date_time(request_text, details)
-    tool_slug = _normalized_text(details.get("tool_slug")).upper() or _default_tool_slug(
-        intent, target_app
-    )
+    tool_slug = _normalized_text(
+        details.get("tool_slug")
+    ).upper() or _default_tool_slug(intent, target_app)
     arguments = dict(details.get("arguments") or {})
     if intent == "send_email":
         if recipient:
@@ -289,7 +298,7 @@ def create_plan(
         arguments.setdefault("start_time", date_time)
 
     required_tools = [tool_slug] if tool_slug else []
-    missing_info: List[str] = []
+    missing_info: list[str] = []
     if intent == "send_email" and not recipient:
         missing_info.append("recipient")
     if intent == "create_calendar_event" and not date_time:
@@ -369,8 +378,8 @@ def create_plan(
     }
 
 
-def _find_secrets(value: Any, path: str = "request") -> List[str]:
-    findings: List[str] = []
+def _find_secrets(value: Any, path: str = "request") -> list[str]:
+    findings: list[str] = []
     if isinstance(value, dict):
         for key, item in value.items():
             normalized = str(key).lower()
@@ -381,13 +390,14 @@ def _find_secrets(value: Any, path: str = "request") -> List[str]:
     elif isinstance(value, list):
         for index, item in enumerate(value):
             findings.extend(_find_secrets(item, f"{path}[{index}]"))
-    elif isinstance(value, str):
-        if any(pattern.search(value) for pattern in SECRET_PATTERNS):
-            findings.append(path)
+    elif isinstance(value, str) and any(
+        pattern.search(value) for pattern in SECRET_PATTERNS
+    ):
+        findings.append(path)
     return sorted(set(findings))
 
 
-def _check(name: str, passed: bool, detail: str) -> Dict[str, Any]:
+def _check(name: str, passed: bool, detail: str) -> dict[str, Any]:
     return {"name": name, "passed": bool(passed), "detail": detail}
 
 
@@ -395,17 +405,18 @@ class AIExecutionService:
     def __init__(
         self,
         *,
-        get_integrations: Callable[[str], Dict[str, Any]],
-        get_tool_context: Callable[[str], Dict[str, Any]],
-        execute_tool: Callable[..., Dict[str, Any]],
-        search_memory: Callable[[str, str], List[Dict[str, Any]]],
-        supabase_health: Callable[[], Dict[str, Any]],
-        redis_health: Callable[[], Dict[str, Any]],
-        set_temporary_state: Callable[[str, str, Dict[str, Any]], bool],
-        get_temporary_state: Callable[[str, str], Optional[Dict[str, Any]]],
+        get_integrations: Callable[[str], dict[str, Any]],
+        get_tool_context: Callable[[str], dict[str, Any]],
+        execute_tool: Callable[..., dict[str, Any]],
+        search_memory: Callable[[str, str], list[dict[str, Any]]],
+        supabase_health: Callable[[], dict[str, Any]],
+        redis_health: Callable[[], dict[str, Any]],
+        set_temporary_state: Callable[[str, str, dict[str, Any]], bool],
+        get_temporary_state: Callable[[str, str], dict[str, Any] | None],
         capture_error: Callable[..., Any],
         redact: Callable[[str], str],
         scrub: Callable[[Any], Any],
+        control_plane: Any | None = None,
     ):
         self.get_integrations = get_integrations
         self.get_tool_context = get_tool_context
@@ -418,11 +429,22 @@ class AIExecutionService:
         self.capture_error = capture_error
         self.redact = redact
         self.scrub = scrub
+        self.control_plane = control_plane or create_execution_control_plane()
+        self.worker_id = (
+            os.getenv("RENDER_INSTANCE_ID")
+            or os.getenv("HOSTNAME")
+            or socket.gethostname()
+            or "api-worker"
+        )
+
+    @staticmethod
+    def _control_workflow_id(state: dict[str, Any]) -> str:
+        return _normalized_text(state.get("workflow_id")) or state["request_id"]
 
     def _safe(self, value: Any) -> Any:
         return self.scrub(value)
 
-    def _persist(self, state: Dict[str, Any]) -> None:
+    def _persist(self, state: dict[str, Any]) -> None:
         state["updated_at"] = _now_iso()
         save_request(self._safe(state))
         self.set_temporary_state(
@@ -433,11 +455,11 @@ class AIExecutionService:
 
     def _audit(
         self,
-        state: Dict[str, Any],
+        state: dict[str, Any],
         stage: str,
         status: str,
-        payload: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
         return append_audit_event(
             state["request_id"],
             state["user_id"],
@@ -446,7 +468,7 @@ class AIExecutionService:
             self._safe(payload),
         )
 
-    def _load(self, request_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+    def _load(self, request_id: str, user_id: str) -> dict[str, Any] | None:
         cached = self.get_temporary_state(user_id, request_id)
         if cached and str(cached.get("user_id")) == str(user_id):
             return cached
@@ -460,12 +482,12 @@ class AIExecutionService:
         *,
         user_id: str,
         request_text: str,
-        action: Optional[Dict[str, Any]] = None,
-        chat_id: Optional[str] = None,
-        workflow_id: Optional[str] = None,
+        action: dict[str, Any] | None = None,
+        chat_id: str | None = None,
+        workflow_id: str | None = None,
         return_to: str = "/",
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         request_id = f"air_{uuid.uuid4().hex}"
         plan = create_plan(request_text, action)
         secret_input_detected = bool(
@@ -499,6 +521,20 @@ class AIExecutionService:
             ),
         }
         self._persist(state)
+        self.control_plane.start(
+            user_id=user_id,
+            workflow_id=self._control_workflow_id(state),
+            step_id=request_id,
+            policy_version="execution-control-v1",
+            risk_score={"low_risk": 0.15, "medium_risk": 0.5, "high_risk": 0.85}.get(
+                plan["risk_level"], 0.5
+            ),
+            metadata={
+                "intent": plan["intent"],
+                "risk_level": plan["risk_level"],
+                "chat_id": chat_id,
+            },
+        )
         self._audit(
             state,
             "request_received",
@@ -528,10 +564,10 @@ class AIExecutionService:
 
     def _validation(
         self,
-        state: Dict[str, Any],
-        integrations: Dict[str, Any],
-        tool_context: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        state: dict[str, Any],
+        integrations: dict[str, Any],
+        tool_context: dict[str, Any],
+    ) -> dict[str, Any]:
         plan = state["plan"]
         actions = plan.get("proposed_actions") or []
         action = actions[0] if actions else {}
@@ -640,17 +676,15 @@ class AIExecutionService:
         return {
             "passed": all(check["passed"] for check in checks),
             "checks": checks,
-            "errors": [
-                check["detail"] for check in checks if not check["passed"]
-            ],
+            "errors": [check["detail"] for check in checks if not check["passed"]],
         }
 
     def _verification(
         self,
-        state: Dict[str, Any],
-        integrations: Dict[str, Any],
-        tool_context: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        state: dict[str, Any],
+        integrations: dict[str, Any],
+        tool_context: dict[str, Any],
+    ) -> dict[str, Any]:
         plan = state["plan"]
         actions = plan.get("proposed_actions") or []
         action = actions[0] if actions else {}
@@ -678,7 +712,9 @@ class AIExecutionService:
             state["request_id"],
         )
         database_action = plan["intent"] in {"modify_database", "delete_data"}
-        connected_database = target_app in {"supabase", "postgresql"} and target_app in connected_apps
+        connected_database = (
+            target_app in {"supabase", "postgresql"} and target_app in connected_apps
+        )
         checks = [
             _check(
                 "qdrant_context",
@@ -738,20 +774,18 @@ class AIExecutionService:
                 "supabase_available": bool(supabase.get("available")),
                 "redis_connected": bool(redis.get("connected")),
             },
-            "errors": [
-                check["detail"] for check in checks if not check["passed"]
-            ],
+            "errors": [check["detail"] for check in checks if not check["passed"]],
         }
 
     def _risk_adaptive_verification(
         self,
         *,
-        state: Dict[str, Any],
-        validation: Dict[str, Any],
-        verification: Dict[str, Any],
-        integrations: Dict[str, Any],
-        tool_context: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        state: dict[str, Any],
+        validation: dict[str, Any],
+        verification: dict[str, Any],
+        integrations: dict[str, Any],
+        tool_context: dict[str, Any],
+    ) -> dict[str, Any]:
         plan = state["plan"]
         proposed = dict((plan.get("proposed_actions") or [{}])[0])
         proposed["intent"] = plan.get("intent")
@@ -778,7 +812,7 @@ class AIExecutionService:
         )
         workflow_id = _normalized_text(state.get("workflow_id")) or state["request_id"]
         step_id = state["request_id"]
-        events: List[Dict[str, Any]] = [
+        events: list[dict[str, Any]] = [
             {
                 "event_type": "agent",
                 "source": "planner_output",
@@ -819,9 +853,13 @@ class AIExecutionService:
         for check in verification.get("checks") or []:
             events.append(
                 {
-                    "event_type": "tool" if check.get("name") == "actual_tool_availability" else "state",
+                    "event_type": "tool"
+                    if check.get("name") == "actual_tool_availability"
+                    else "state",
                     "source": check.get("name") or "verification_check",
-                    "tool_name": proposed.get("tool_slug") if check.get("name") == "actual_tool_availability" else None,
+                    "tool_name": proposed.get("tool_slug")
+                    if check.get("name") == "actual_tool_availability"
+                    else None,
                     "status": "available" if check.get("passed") else "failed",
                     "success": bool(check.get("passed")),
                     "trusted": True,
@@ -838,7 +876,8 @@ class AIExecutionService:
             **request_metadata,
             "known_tools": known_tools,
             "tool_inventory_complete": True,
-            "original_tokens": request_metadata.get("original_tokens") or original_tokens,
+            "original_tokens": request_metadata.get("original_tokens")
+            or original_tokens,
             "retry_count": request_metadata.get("retry_count") or 0,
             "retry_limit": request_metadata.get("retry_limit") or 2,
             "policy_floor": request_metadata.get("verification_policy_floor"),
@@ -861,7 +900,7 @@ class AIExecutionService:
         record_verification_evaluation(user_id=state["user_id"], result=result)
         return result
 
-    def confirmation_card(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def confirmation_card(self, state: dict[str, Any]) -> dict[str, Any]:
         plan = state["plan"]
         action = (plan.get("proposed_actions") or [{}])[0]
         return {
@@ -889,7 +928,7 @@ class AIExecutionService:
             "cancel_label": "Cancel",
         }
 
-    def validate(self, *, user_id: str, request_id: str) -> Dict[str, Any]:
+    def validate(self, *, user_id: str, request_id: str) -> dict[str, Any]:
         state = self._load(request_id, user_id)
         if state is None:
             return {"ok": False, "not_found": True, "error": "AI request not found."}
@@ -911,7 +950,7 @@ class AIExecutionService:
                 integrations=integrations,
                 tool_context=tool_context,
             )
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - provider boundary is fail-closed
             self.capture_error(
                 error,
                 category="ai_execution_verification_failure",
@@ -939,8 +978,47 @@ class AIExecutionService:
         review_required = passed and (
             engine_decision == "REVIEW" or state["risk_level"] == "high_risk"
         )
+        control_decision = (
+            "RETRY"
+            if engine_decision == "RETRY"
+            else "BLOCK"
+            if not passed
+            else "REVIEW"
+            if review_required
+            else "ALLOW"
+        )
+        try:
+            self.control_plane.record_verification(
+                user_id=user_id,
+                workflow_id=self._control_workflow_id(state),
+                step_id=request_id,
+                decision=control_decision,
+                reason=risk_adaptive.get("reason")
+                or "Risk-adaptive verification completed.",
+                policy_version=risk_adaptive.get("policy_version")
+                or "risk-adaptive-v2",
+                risk_score=float(risk_adaptive.get("current_risk") or 0),
+                evidence_ids=risk_adaptive.get("evidence_ids") or [],
+                auto_authorize=passed and not review_required,
+            )
+        except ControlPlaneError as error:
+            self.capture_error(
+                error,
+                category="execution_control_failure",
+                user_id=user_id,
+                request_id=request_id,
+                operation="record_verification",
+            )
+            if state["risk_level"] == "high_risk":
+                passed = False
+                review_required = False
+                validation["errors"].append(
+                    "Durable execution authorization could not be recorded."
+                )
         if not passed:
-            state["status"] = "retry_required" if engine_decision == "RETRY" else "rejected"
+            state["status"] = (
+                "retry_required" if engine_decision == "RETRY" else "rejected"
+            )
             state["confirmation_status"] = "blocked"
         elif review_required:
             state["status"] = "awaiting_confirmation"
@@ -973,7 +1051,11 @@ class AIExecutionService:
             "confirmation_card": (
                 self.confirmation_card(state) if confirmation_required else None
             ),
-            "next_step": "confirm" if confirmation_required else "execute" if passed else None,
+            "next_step": "confirm"
+            if confirmation_required
+            else "execute"
+            if passed
+            else None,
         }
 
     def confirm(
@@ -982,8 +1064,8 @@ class AIExecutionService:
         user_id: str,
         request_id: str,
         decision: str,
-        reason: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        reason: str | None = None,
+    ) -> dict[str, Any]:
         state = self._load(request_id, user_id)
         if state is None:
             return {"ok": False, "not_found": True, "error": "AI request not found."}
@@ -1004,6 +1086,37 @@ class AIExecutionService:
                 "status": state["status"],
             }
         confirmed = decision == "confirm"
+        try:
+            if confirmed:
+                self.control_plane.authorize(
+                    user_id=user_id,
+                    workflow_id=self._control_workflow_id(state),
+                    step_id=request_id,
+                    actor=f"user:{user_id}",
+                    reason=reason or "Explicit user approval recorded.",
+                )
+            else:
+                self.control_plane.cancel(
+                    user_id=user_id,
+                    workflow_id=self._control_workflow_id(state),
+                    step_id=request_id,
+                    actor=f"user:{user_id}",
+                    reason=reason or "User rejected the proposed action.",
+                )
+        except ControlPlaneError as error:
+            self.capture_error(
+                error,
+                category="execution_control_failure",
+                user_id=user_id,
+                request_id=request_id,
+                operation="authorize_or_cancel",
+            )
+            return {
+                "ok": False,
+                "blocked": True,
+                "status": state["status"],
+                "error": "Durable authorization could not be recorded.",
+            }
         state["confirmation_status"] = "confirmed" if confirmed else "cancelled"
         state["status"] = "ready" if confirmed else "cancelled"
         self._persist(state)
@@ -1024,7 +1137,7 @@ class AIExecutionService:
             "next_step": "execute" if confirmed else None,
         }
 
-    def _execute_action(self, state: Dict[str, Any]) -> Dict[str, Any]:
+    def _execute_action(self, state: dict[str, Any]) -> dict[str, Any]:
         plan = state["plan"]
         action = (plan.get("proposed_actions") or [{}])[0]
         intent = plan["intent"]
@@ -1070,9 +1183,9 @@ class AIExecutionService:
     def _post_execution_verification(
         self,
         *,
-        state: Dict[str, Any],
-        execution_result: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        state: dict[str, Any],
+        execution_result: dict[str, Any],
+    ) -> dict[str, Any]:
         plan = state["plan"]
         action = dict((plan.get("proposed_actions") or [{}])[0])
         action["intent"] = plan.get("intent")
@@ -1092,8 +1205,8 @@ class AIExecutionService:
             "idempotent",
             plan.get("intent") in {"answer_question", "summarize", "search_data"},
         )
-        identifiers: List[str] = []
-        stack: List[Any] = [execution_result]
+        identifiers: list[str] = []
+        stack: list[Any] = [execution_result]
         while stack and len(identifiers) < 20:
             item = stack.pop()
             if isinstance(item, dict):
@@ -1111,10 +1224,12 @@ class AIExecutionService:
                 stack.extend(item[:100])
         success = bool(execution_result.get("ok"))
         tool_name = action.get("tool_slug")
-        events: List[Dict[str, Any]] = [
+        events: list[dict[str, Any]] = [
             {
                 "event_type": "tool" if tool_name else "state",
-                "source": "tool_execution_result" if tool_name else "internal_execution_result",
+                "source": "tool_execution_result"
+                if tool_name
+                else "internal_execution_result",
                 "tool_name": tool_name,
                 "status": "success" if success else "failed",
                 "success": success,
@@ -1189,7 +1304,7 @@ class AIExecutionService:
         record_verification_evaluation(user_id=state["user_id"], result=result)
         return result
 
-    def execute(self, *, user_id: str, request_id: str) -> Dict[str, Any]:
+    def execute(self, *, user_id: str, request_id: str) -> dict[str, Any]:
         state = self._load(request_id, user_id)
         if state is None:
             return {"ok": False, "not_found": True, "error": "AI request not found."}
@@ -1219,9 +1334,8 @@ class AIExecutionService:
                 "error": f"Risk-adaptive verification returned {engine_decision}.",
             }
         if (
-            (state["risk_level"] == "high_risk" or engine_decision == "REVIEW")
-            and state.get("confirmation_status") != "confirmed"
-        ):
+            state["risk_level"] == "high_risk" or engine_decision == "REVIEW"
+        ) and state.get("confirmation_status") != "confirmed":
             return {
                 "ok": False,
                 "blocked": True,
@@ -1238,10 +1352,65 @@ class AIExecutionService:
                 "error": "Request is not ready for execution.",
             }
 
+        workflow_id = self._control_workflow_id(state)
+        idempotency_key = f"ai-execution:{user_id}:{request_id}"
+        try:
+            lease: ExecutionLease = self.control_plane.begin_execution(
+                user_id=user_id,
+                workflow_id=workflow_id,
+                step_id=request_id,
+                idempotency_key=idempotency_key,
+                request={
+                    "intent": state.get("intent"),
+                    "plan": state.get("plan") or {},
+                    "confirmation_status": state.get("confirmation_status"),
+                },
+                owner=self.worker_id,
+                lease_seconds=120,
+            )
+        except (IdempotencyConflict, LeaseConflict) as error:
+            return {
+                "ok": False,
+                "blocked": True,
+                "status": "already_executing",
+                "error": str(error),
+            }
+        except ExecutionCancelled as error:
+            return {
+                "ok": False,
+                "blocked": True,
+                "status": "cancelled",
+                "error": str(error),
+            }
+        except ControlPlaneError as error:
+            self.capture_error(
+                error,
+                category="execution_control_failure",
+                user_id=user_id,
+                request_id=request_id,
+                workflow_id=workflow_id,
+                operation="begin_execution",
+            )
+            return {
+                "ok": False,
+                "blocked": True,
+                "status": "control_plane_unavailable",
+                "error": "Durable execution authorization is unavailable.",
+            }
+        if lease.replay:
+            replay = self._safe(lease.response or {})
+            return {
+                "ok": bool(replay.get("ok")),
+                "request_id": request_id,
+                "status": "executed" if replay.get("ok") else "failed",
+                "execution_result": replay,
+                "idempotent_replay": True,
+            }
+
         self._audit(state, "execution", "started", {"intent": state["intent"]})
         try:
             result = self._execute_action(state)
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 - tool adapters may raise any provider error
             self.capture_error(
                 error,
                 category="ai_execution_failure",
@@ -1254,6 +1423,14 @@ class AIExecutionService:
             result = {"ok": False, "error": self.redact(str(error))}
 
         if result.get("connection_required"):
+            try:
+                self.control_plane.fail_execution(
+                    user_id=user_id,
+                    lease=lease,
+                    error="External integration connection is required.",
+                )
+            except ControlPlaneError:
+                pass
             state["status"] = "awaiting_connection"
             state["execution_result"] = self._safe(result)
             self._persist(state)
@@ -1279,6 +1456,45 @@ class AIExecutionService:
             "risk_adaptive_verification": post_verification,
         }
         success = bool(result.get("ok")) and post_verification["decision"] == "ALLOW"
+        action = dict((state.get("plan", {}).get("proposed_actions") or [{}])[0])
+        provider = _normalized_text(action.get("target_app")) or "internal"
+        result_data = result.get("data")
+        provider_action_id = (
+            _normalized_text(
+                result.get("provider_action_id")
+                or result.get("id")
+                or (result_data.get("id") if isinstance(result_data, dict) else None)
+            )
+            or None
+        )
+        try:
+            control_result = self.control_plane.finalize_execution(
+                user_id=user_id,
+                lease=lease,
+                result=self._safe(result),
+                verified=success,
+                provider=provider,
+                provider_action_id=provider_action_id,
+                evidence_ids=post_verification.get("evidence_ids") or [],
+            )
+            result["action_receipt_id"] = control_result["receipt_id"]
+            result["execution_control_state"] = control_result["state"]
+        except (ExecutionCancelled, StaleFence, ControlPlaneError) as error:
+            success = False
+            result = {
+                **result,
+                "ok": False,
+                "error": "Execution result was rejected by durable control checks.",
+                "control_error": self.redact(str(error)),
+            }
+            self.capture_error(
+                error,
+                category="execution_control_failure",
+                user_id=user_id,
+                request_id=request_id,
+                workflow_id=workflow_id,
+                operation="finalize_execution",
+            )
         state["status"] = (
             "executed"
             if success
@@ -1311,8 +1527,21 @@ class AIExecutionService:
             "execution_result": self._safe(result),
         }
 
-    def audit(self, *, user_id: str, request_id: str) -> Optional[Dict[str, Any]]:
-        return get_audit(request_id, user_id)
+    def audit(self, *, user_id: str, request_id: str) -> dict[str, Any] | None:
+        result = get_audit(request_id, user_id)
+        if result is None:
+            return None
+        state = self._load(request_id, user_id)
+        if state is not None:
+            try:
+                result["execution_control"] = self.control_plane.snapshot(
+                    user_id=user_id,
+                    workflow_id=self._control_workflow_id(state),
+                    step_id=request_id,
+                )
+            except ControlPlaneError:
+                result["execution_control"] = {"available": False}
+        return result
 
     def evaluate_risk(
         self,
@@ -1321,10 +1550,10 @@ class AIExecutionService:
         workflow_id: str,
         step_id: str,
         phase: str,
-        action: Dict[str, Any],
-        evidence: List[Dict[str, Any]],
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        action: dict[str, Any],
+        evidence: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         safe_action = self._safe(action)
         safe_evidence = self._safe(evidence)
         raw_metadata = dict(metadata or {})
@@ -1374,7 +1603,7 @@ class AIExecutionService:
         workflow_id: str,
         evidence_limit: int = 200,
         decision_limit: int = 100,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return {
             "workflow_id": workflow_id,
             "state": get_workflow_risk_state(user_id, workflow_id),
@@ -1390,7 +1619,7 @@ class AIExecutionService:
             ),
         }
 
-    def verification_metrics(self, *, user_id: str) -> Dict[str, Any]:
+    def verification_metrics(self, *, user_id: str) -> dict[str, Any]:
         return verification_metrics(user_id=user_id)
 
     def pending_verification_audits(
@@ -1398,7 +1627,7 @@ class AIExecutionService:
         *,
         user_id: str,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         return pending_semantic_audits(user_id=user_id, limit=limit)
 
     def submit_semantic_audit(
@@ -1409,8 +1638,8 @@ class AIExecutionService:
         outcome: str,
         verifier: str,
         tokens_used: int = 0,
-        notes: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        notes: str | None = None,
+    ) -> dict[str, Any]:
         return record_semantic_audit(
             user_id=user_id,
             decision_id=decision_id,

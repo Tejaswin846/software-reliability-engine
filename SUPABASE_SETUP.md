@@ -1,8 +1,8 @@
 # Supabase Setup
 
-Software uses Supabase as optional remote persistence for Clerk user profiles,
-chats, messages, and benchmark run mirrors. Clerk owns authentication. SQLite
-remains active for the existing reliability dashboard and APIs.
+Software uses Supabase for remote persistence and as the production execution
+control plane. Clerk owns authentication. SQLite remains the local-development
+adapter and continues to support legacy reliability dashboard data.
 
 ## Configure
 
@@ -12,11 +12,16 @@ remains active for the existing reliability dashboard and APIs.
    `benchmark_runs` already exist. It creates missing tables and indexes, adds
    missing columns, restores constraints where possible, enables RLS, recreates
    the required policies, and installs the `chats.updated_at` trigger.
-3. Set these server-only environment variables:
+3. Run `supabase_execution_control.sql`. This adds the formal execution state
+   machine, immutable ledger, transactional outbox, fencing leases,
+   idempotency records, action receipts, worker heartbeats, retries, and DLQ.
+4. Set these server-only environment variables:
 
 ```text
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SOFTWARE_EXECUTION_CONTROL_BACKEND=auto
+SOFTWARE_EXECUTION_CONTROL_SUPABASE_READY=true
 ```
 
 Do not commit a real key. On Render, add both values under the Web Service
@@ -68,6 +73,10 @@ The final queries in `supabase_schema.sql` verify:
 - the Software updated-at triggers exist.
 
 The missing-column query should return zero rows.
+
+The final query in `supabase_execution_control.sql` should list six execution
+tables with `rls_enabled = true`. Run the Supabase security and performance
+advisors after applying either schema file.
 
 Do not use Supabase Auth for Software account flows. The
 server uses `SUPABASE_SERVICE_ROLE_KEY` only for storage writes and enforces
