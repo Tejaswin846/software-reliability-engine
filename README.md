@@ -185,10 +185,13 @@ and propose a JSON plan, but important actions remain blocked until the system
 has validated required fields, verified live tools and data sources, and
 received human confirmation for high-risk work.
 
-The control flow is:
+The control flow now includes Risk-Adaptive Verification v2:
 
 ```text
-Intent -> Risk -> Plan -> Validate -> Verify -> Confirm -> Execute -> Audit
+Intent -> Plan -> Evidence -> Deterministic checks
+       -> Current + cumulative risk -> Evidence strength + uncertainty
+       -> Policy + token ceiling -> Code / model / human route
+       -> ALLOW / RETRY / BLOCK / REVIEW -> Execute -> Post-action verification
 ```
 
 High-risk actions such as sending email, modifying or deleting data, creating
@@ -211,7 +214,25 @@ POST /api/ai/validate
 POST /api/ai/confirm
 POST /api/ai/execute
 GET  /api/ai/audit/{request_id}
+POST /api/ai/verification/evaluate
+GET  /api/ai/verification/workflows/{workflow_id}
+GET  /api/ai/verification/metrics
+GET  /api/ai/verification/audits/pending
+POST /api/ai/verification/audits
 ```
+
+The v2 verifier treats agent/model output as untrusted data and keeps raw
+evidence retrievable. It detects false-success contradictions, unknown or
+unexpected tools, unsafe duplicate actions, retry-limit violations, invalid
+state transitions, missing post-action evidence, and authentication or timeout
+failures. A low-risk step cannot erase sensitive data, privilege, financial,
+failure, or side-effect context accumulated earlier in the workflow.
+
+Verification budgets have normal, escalation, and emergency reserves. If the
+required verification path exceeds the cost ceiling, the engine returns
+`REVIEW` or `BLOCK`; it never downgrades a safety requirement to save tokens.
+Code-only `ALLOW` decisions are sampled into an adaptive semantic-audit queue.
+Audit outcomes calibrate future sampling and feed the metrics endpoint.
 
 See [AI_EXECUTION_ARCHITECTURE.md](AI_EXECUTION_ARCHITECTURE.md) for request
 contracts, risk policy, and frontend integration.

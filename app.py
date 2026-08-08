@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sqlite3
+import threading
 import time
 import uuid
 import hashlib
@@ -222,9 +223,12 @@ API_RATE_LIMIT_WINDOW_SECONDS = int(
     os.getenv("SOFTWARE_API_RATE_LIMIT_WINDOW_SECONDS", "60")
 )
 DB_PATH = Path(os.getenv("SOFTWARE_API_DB_PATH", DATA_DIR / "software_reliability.db")).expanduser()
+SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("SOFTWARE_SQLITE_BUSY_TIMEOUT_MS", "30000")))
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
 STARTUP_CHECKS: Dict[str, Any] = {}
 LOGGER = logging.getLogger("software.app")
+_DB_INIT_LOCK = threading.Lock()
+_INITIALIZED_DATABASES: set[str] = set()
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRO_PRICE_ID = os.getenv("STRIPE_PRO_PRICE_ID", "")
@@ -277,10 +281,17 @@ def now_iso() -> str:
 
 
 def connect() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(DB_PATH)
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(
+        DB_PATH,
+        timeout=SQLITE_BUSY_TIMEOUT_MS / 1000.0,
+    )
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
+    connection.execute("PRAGMA synchronous = NORMAL")
+    connection.execute("PRAGMA temp_store = MEMORY")
+    connection.execute("PRAGMA cache_size = -8192")
     return connection
 
 
@@ -1037,8 +1048,9 @@ def billing_invoice_rows(db: sqlite3.Connection, user_id: str) -> List[Dict[str,
     return [row_to_dict(row) for row in rows]
 
 
-def init_db() -> None:
+def _initialize_database() -> None:
     with connect() as db:
+        db.execute("PRAGMA journal_mode = WAL")
         db.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
@@ -1583,6 +1595,18 @@ def init_db() -> None:
         seed_plans(db)
         bootstrap_dev_identity(db)
         ensure_default_subscriptions(db)
+
+
+def init_db() -> None:
+    """Initialize a database path once and make repeated request-path checks cheap."""
+    database_key = os.path.abspath(os.fspath(DB_PATH))
+    if database_key in _INITIALIZED_DATABASES and DB_PATH.exists():
+        return
+    with _DB_INIT_LOCK:
+        if database_key in _INITIALIZED_DATABASES and DB_PATH.exists():
+            return
+        _initialize_database()
+        _INITIALIZED_DATABASES.add(database_key)
 
 
 class WorkflowResultCreate(BaseModel):
@@ -7370,7 +7394,10 @@ def api_copilot_summary() -> Dict[str, Any]:
 
 
 @app.post("/api/decisions/validate")
-def api_decision_validate(payload: DecisionValidateRequest) -> Dict[str, Any]:
+def api_decision_validate(
+    payload: DecisionValidateRequest,
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     init_db()
     action = {
         **payload.action,
@@ -7431,12 +7458,18 @@ def api_decision_reject(
 
 
 @app.get("/api/decisions/pending")
-def api_decisions_pending(limit: int = Query(50, ge=1, le=200)) -> Dict[str, Any]:
+def api_decisions_pending(
+    limit: int = Query(50, ge=1, le=200),
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     return {"ok": True, "decisions": pending_decisions_payload(limit)}
 
 
 @app.post("/api/optimizer/run")
-def api_optimizer_run(payload: OptimizerRunRequest = OptimizerRunRequest()) -> Dict[str, Any]:
+def api_optimizer_run(
+    payload: OptimizerRunRequest = OptimizerRunRequest(),
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     result = run_optimizer(
         dry_run=payload.dry_run,
         min_confidence=payload.min_confidence,
@@ -7446,28 +7479,40 @@ def api_optimizer_run(payload: OptimizerRunRequest = OptimizerRunRequest()) -> D
 
 
 @app.post("/api/optimizer/rollback")
-def api_optimizer_rollback(payload: OptimizerRollbackRequest) -> Dict[str, Any]:
+def api_optimizer_rollback(
+    payload: OptimizerRollbackRequest,
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     result = rollback_optimizer_event(payload.event_id, dry_run=payload.dry_run)
     return {"ok": True, "rollback": result, "stats": optimizer_stats_payload()}
 
 
 @app.get("/api/optimizer/history")
-def api_optimizer_history(limit: int = Query(20, ge=1, le=100)) -> Dict[str, Any]:
+def api_optimizer_history(
+    limit: int = Query(20, ge=1, le=100),
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     return {"ok": True, "history": optimizer_history_payload(limit)}
 
 
 @app.get("/api/optimizer/stats")
-def api_optimizer_stats() -> Dict[str, Any]:
+def api_optimizer_stats(
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     return {"ok": True, "stats": optimizer_stats_payload()}
 
 
 @app.get("/api/dashboard/historical-trends")
-def api_dashboard_historical_trends() -> Dict[str, Any]:
+def api_dashboard_historical_trends(
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     return {"ok": True, "historical_trends": dashboard_trends_payload()}
 
 
 @app.get("/api/dashboard/sdk-workflows")
-def api_dashboard_sdk_workflows() -> Dict[str, Any]:
+def api_dashboard_sdk_workflows(
+    _user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
     return {"ok": True, "sdk_workflows": dashboard_sdk_payload()}
 
 

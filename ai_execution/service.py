@@ -5,7 +5,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional
 
-from .storage import append_audit_event, get_audit, get_request, save_request
+from .risk_adaptive import evaluate_verification
+from .storage import (
+    append_audit_event,
+    get_audit,
+    get_request,
+    get_workflow_risk_state,
+    list_workflow_decisions,
+    list_workflow_evidence,
+    pending_semantic_audits,
+    record_semantic_audit,
+    record_verification_evaluation,
+    save_request,
+    verification_metrics,
+)
 
 
 INTENTS = {
@@ -730,6 +743,124 @@ class AIExecutionService:
             ],
         }
 
+    def _risk_adaptive_verification(
+        self,
+        *,
+        state: Dict[str, Any],
+        validation: Dict[str, Any],
+        verification: Dict[str, Any],
+        integrations: Dict[str, Any],
+        tool_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        plan = state["plan"]
+        proposed = dict((plan.get("proposed_actions") or [{}])[0])
+        proposed["intent"] = plan.get("intent")
+        proposed.setdefault(
+            "side_effect",
+            plan.get("intent")
+            in {
+                "send_email",
+                "create_calendar_event",
+                "modify_database",
+                "delete_data",
+                "external_tool_action",
+            },
+        )
+        proposed.setdefault("irreversible", plan.get("intent") == "delete_data")
+        proposed.setdefault(
+            "idempotent",
+            plan.get("intent") in {"answer_question", "summarize", "search_data"},
+        )
+        request_metadata = dict(state.get("metadata") or {})
+        proposed.setdefault(
+            "sensitive_data_classes",
+            request_metadata.get("sensitive_data_classes") or [],
+        )
+        workflow_id = _normalized_text(state.get("workflow_id")) or state["request_id"]
+        step_id = state["request_id"]
+        events: List[Dict[str, Any]] = [
+            {
+                "event_type": "agent",
+                "source": "planner_output",
+                "status": "proposed",
+                "success": True,
+                "trusted": False,
+                "independent": False,
+                "untrusted_data": {
+                    "intent": plan.get("intent"),
+                    "description": proposed.get("description"),
+                },
+            },
+            {
+                "event_type": "state",
+                "source": "authenticated_request_context",
+                "status": "confirmed",
+                "success": bool(state.get("user_id")),
+                "trusted": True,
+                "independent": True,
+            },
+            {
+                "event_type": "state",
+                "source": "schema_and_policy_validation",
+                "status": "confirmed" if validation.get("passed") else "failed",
+                "success": bool(validation.get("passed")),
+                "trusted": True,
+                "independent": True,
+            },
+            {
+                "event_type": "state",
+                "source": "execution_boundary_policy",
+                "status": "confirmed",
+                "success": True,
+                "trusted": True,
+                "independent": True,
+            },
+        ]
+        for check in verification.get("checks") or []:
+            events.append(
+                {
+                    "event_type": "tool" if check.get("name") == "actual_tool_availability" else "state",
+                    "source": check.get("name") or "verification_check",
+                    "tool_name": proposed.get("tool_slug") if check.get("name") == "actual_tool_availability" else None,
+                    "status": "available" if check.get("passed") else "failed",
+                    "success": bool(check.get("passed")),
+                    "trusted": True,
+                    "independent": True,
+                }
+            )
+        known_tools = [
+            _normalized_text(tool.get("name")).upper()
+            for tool in tool_context.get("tools") or []
+            if _normalized_text(tool.get("name"))
+        ]
+        original_tokens = max(1, round(len(state.get("request_text") or "") / 4))
+        engine_metadata = {
+            **request_metadata,
+            "known_tools": known_tools,
+            "tool_inventory_complete": True,
+            "original_tokens": request_metadata.get("original_tokens") or original_tokens,
+            "retry_count": request_metadata.get("retry_count") or 0,
+            "retry_limit": request_metadata.get("retry_limit") or 2,
+            "policy_floor": request_metadata.get("verification_policy_floor"),
+            "connected_apps": [
+                app.get("id")
+                for app in integrations.get("apps") or []
+                if app.get("connected")
+            ],
+        }
+        result = evaluate_verification(
+            user_id=state["user_id"],
+            workflow_id=workflow_id,
+            step_id=step_id,
+            phase="pre",
+            action=proposed,
+            evidence_events=events,
+            workflow_state=get_workflow_risk_state(state["user_id"], workflow_id),
+            metadata=engine_metadata,
+        )
+        record_verification_evaluation(user_id=state["user_id"], result=result)
+        return result
+
     def confirmation_card(self, state: Dict[str, Any]) -> Dict[str, Any]:
         plan = state["plan"]
         action = (plan.get("proposed_actions") or [{}])[0]
@@ -773,6 +904,13 @@ class AIExecutionService:
             tool_context = self.get_tool_context(user_id)
             validation = self._validation(state, integrations, tool_context)
             verification = self._verification(state, integrations, tool_context)
+            risk_adaptive = self._risk_adaptive_verification(
+                state=state,
+                validation=validation,
+                verification=verification,
+                integrations=integrations,
+                tool_context=tool_context,
+            )
         except Exception as error:
             self.capture_error(
                 error,
@@ -790,12 +928,21 @@ class AIExecutionService:
             return {"ok": False, "error": "Validation infrastructure failed."}
 
         state["validation_result"] = validation
+        verification["risk_adaptive"] = risk_adaptive
         state["verification_result"] = verification
-        passed = bool(validation["passed"] and verification["passed"])
+        engine_decision = risk_adaptive["decision"]
+        passed = bool(
+            validation["passed"]
+            and verification["passed"]
+            and engine_decision not in {"BLOCK", "RETRY"}
+        )
+        review_required = passed and (
+            engine_decision == "REVIEW" or state["risk_level"] == "high_risk"
+        )
         if not passed:
-            state["status"] = "rejected"
+            state["status"] = "retry_required" if engine_decision == "RETRY" else "rejected"
             state["confirmation_status"] = "blocked"
-        elif state["risk_level"] == "high_risk":
+        elif review_required:
             state["status"] = "awaiting_confirmation"
             state["confirmation_status"] = "pending"
         else:
@@ -814,13 +961,14 @@ class AIExecutionService:
             "passed" if verification["passed"] else "failed",
             {"verification_result": verification},
         )
-        confirmation_required = passed and state["risk_level"] == "high_risk"
+        confirmation_required = review_required
         return {
             "ok": passed,
             "request_id": request_id,
             "status": state["status"],
             "validation_result": validation,
             "verification_result": verification,
+            "risk_adaptive": risk_adaptive,
             "confirmation_required": confirmation_required,
             "confirmation_card": (
                 self.confirmation_card(state) if confirmation_required else None
@@ -839,7 +987,12 @@ class AIExecutionService:
         state = self._load(request_id, user_id)
         if state is None:
             return {"ok": False, "not_found": True, "error": "AI request not found."}
-        if state["risk_level"] != "high_risk":
+        engine_decision = (
+            state.get("verification_result", {})
+            .get("risk_adaptive", {})
+            .get("decision")
+        )
+        if state["risk_level"] != "high_risk" and engine_decision != "REVIEW":
             return {
                 "ok": False,
                 "error": "This request does not require human confirmation.",
@@ -914,6 +1067,128 @@ class AIExecutionService:
             "error": "No verified execution tool is available for this action.",
         }
 
+    def _post_execution_verification(
+        self,
+        *,
+        state: Dict[str, Any],
+        execution_result: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        plan = state["plan"]
+        action = dict((plan.get("proposed_actions") or [{}])[0])
+        action["intent"] = plan.get("intent")
+        action.setdefault(
+            "side_effect",
+            plan.get("intent")
+            in {
+                "send_email",
+                "create_calendar_event",
+                "modify_database",
+                "delete_data",
+                "external_tool_action",
+            },
+        )
+        action.setdefault("irreversible", plan.get("intent") == "delete_data")
+        action.setdefault(
+            "idempotent",
+            plan.get("intent") in {"answer_question", "summarize", "search_data"},
+        )
+        identifiers: List[str] = []
+        stack: List[Any] = [execution_result]
+        while stack and len(identifiers) < 20:
+            item = stack.pop()
+            if isinstance(item, dict):
+                for key, value in item.items():
+                    normalized_key = _normalized_text(key).lower()
+                    if (
+                        normalized_key == "id"
+                        or normalized_key.endswith("_id")
+                        or normalized_key in {"identifier", "transaction", "receipt"}
+                    ) and _normalized_text(value):
+                        identifiers.append(_normalized_text(value)[:240])
+                    elif isinstance(value, (dict, list)):
+                        stack.append(value)
+            elif isinstance(item, list):
+                stack.extend(item[:100])
+        success = bool(execution_result.get("ok"))
+        tool_name = action.get("tool_slug")
+        events: List[Dict[str, Any]] = [
+            {
+                "event_type": "tool" if tool_name else "state",
+                "source": "tool_execution_result" if tool_name else "internal_execution_result",
+                "tool_name": tool_name,
+                "status": "success" if success else "failed",
+                "success": success,
+                "trusted": True,
+                "independent": True,
+                "identifiers": identifiers,
+                "expected_state": True,
+                "observed_state": success,
+                "token_count": int(
+                    (execution_result.get("usage") or {}).get("total_tokens") or 0
+                )
+                if isinstance(execution_result.get("usage"), dict)
+                else 0,
+            }
+        ]
+        if not tool_name:
+            events.extend(
+                [
+                    {
+                        "event_type": "state",
+                        "source": "execution_boundary_policy",
+                        "status": "confirmed",
+                        "success": success,
+                        "trusted": True,
+                        "independent": True,
+                        "expected_state": True,
+                        "observed_state": success,
+                    },
+                    {
+                        "event_type": "source",
+                        "source": execution_result.get("source") or "internal_service",
+                        "status": "confirmed",
+                        "success": success,
+                        "trusted": True,
+                        "independent": True,
+                    },
+                ]
+            )
+        if state.get("confirmation_status") == "confirmed":
+            events.append(
+                {
+                    "event_type": "decision",
+                    "source": "human_approval_gate",
+                    "status": "approved",
+                    "success": True,
+                    "trusted": True,
+                    "independent": True,
+                    "supporting_evidence_ids": [events[0].get("event_id")]
+                    if events[0].get("event_id")
+                    else [],
+                }
+            )
+        workflow_id = _normalized_text(state.get("workflow_id")) or state["request_id"]
+        request_metadata = dict(state.get("metadata") or {})
+        result = evaluate_verification(
+            user_id=state["user_id"],
+            workflow_id=workflow_id,
+            step_id=state["request_id"],
+            phase="post",
+            action=action,
+            evidence_events=events,
+            workflow_state=get_workflow_risk_state(state["user_id"], workflow_id),
+            metadata={
+                **request_metadata,
+                "original_tokens": request_metadata.get("original_tokens")
+                or max(1, round(len(state.get("request_text") or "") / 4)),
+                "retry_count": request_metadata.get("retry_count") or 0,
+                "retry_limit": request_metadata.get("retry_limit") or 2,
+                "policy_floor": request_metadata.get("verification_policy_floor"),
+            },
+        )
+        record_verification_evaluation(user_id=state["user_id"], result=result)
+        return result
+
     def execute(self, *, user_id: str, request_id: str) -> Dict[str, Any]:
         state = self._load(request_id, user_id)
         if state is None:
@@ -935,8 +1210,16 @@ class AIExecutionService:
                 "status": state["status"],
                 "error": "Validation and verification must pass before execution.",
             }
+        engine_decision = verification.get("risk_adaptive", {}).get("decision")
+        if engine_decision in {"BLOCK", "RETRY"}:
+            return {
+                "ok": False,
+                "blocked": True,
+                "status": state["status"],
+                "error": f"Risk-adaptive verification returned {engine_decision}.",
+            }
         if (
-            state["risk_level"] == "high_risk"
+            (state["risk_level"] == "high_risk" or engine_decision == "REVIEW")
             and state.get("confirmation_status") != "confirmed"
         ):
             return {
@@ -944,7 +1227,7 @@ class AIExecutionService:
                 "blocked": True,
                 "confirmation_required": True,
                 "status": "awaiting_confirmation",
-                "error": "High-risk action requires explicit user confirmation.",
+                "error": "Risk-adaptive verification requires explicit user confirmation.",
                 "confirmation_card": self.confirmation_card(state),
             }
         if state["status"] != "ready":
@@ -987,8 +1270,22 @@ class AIExecutionService:
                 **self._safe(result),
             }
 
-        success = bool(result.get("ok"))
-        state["status"] = "executed" if success else "failed"
+        post_verification = self._post_execution_verification(
+            state=state,
+            execution_result=result,
+        )
+        result = {
+            **result,
+            "risk_adaptive_verification": post_verification,
+        }
+        success = bool(result.get("ok")) and post_verification["decision"] == "ALLOW"
+        state["status"] = (
+            "executed"
+            if success
+            else "review_required"
+            if result.get("ok") and post_verification["decision"] == "REVIEW"
+            else "failed"
+        )
         state["execution_result"] = self._safe(result)
         self._persist(state)
         self._audit(
@@ -1016,3 +1313,109 @@ class AIExecutionService:
 
     def audit(self, *, user_id: str, request_id: str) -> Optional[Dict[str, Any]]:
         return get_audit(request_id, user_id)
+
+    def evaluate_risk(
+        self,
+        *,
+        user_id: str,
+        workflow_id: str,
+        step_id: str,
+        phase: str,
+        action: Dict[str, Any],
+        evidence: List[Dict[str, Any]],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        safe_action = self._safe(action)
+        safe_evidence = self._safe(evidence)
+        raw_metadata = dict(metadata or {})
+        safe_metadata = self._safe(raw_metadata)
+        for key in (
+            "original_tokens",
+            "retry_count",
+            "retry_limit",
+            "retry_cost",
+            "audit_base_rate",
+        ):
+            if isinstance(raw_metadata.get(key), (int, float)):
+                safe_metadata[key] = raw_metadata[key]
+        raw_budget = raw_metadata.get("token_budget")
+        if isinstance(raw_budget, dict):
+            safe_metadata["token_budget"] = {
+                key: value
+                for key, value in raw_budget.items()
+                if key
+                in {
+                    "original_tokens",
+                    "verification_budget",
+                    "verification_tokens_spent",
+                    "small_model_cost",
+                    "frontier_model_cost",
+                    "retry_cost",
+                }
+                and isinstance(value, (int, float))
+            }
+        result = evaluate_verification(
+            user_id=user_id,
+            workflow_id=workflow_id,
+            step_id=step_id,
+            phase=phase,
+            action=safe_action,
+            evidence_events=safe_evidence,
+            workflow_state=get_workflow_risk_state(user_id, workflow_id),
+            metadata=safe_metadata,
+        )
+        record_verification_evaluation(user_id=user_id, result=result)
+        return result
+
+    def verification_workflow(
+        self,
+        *,
+        user_id: str,
+        workflow_id: str,
+        evidence_limit: int = 200,
+        decision_limit: int = 100,
+    ) -> Dict[str, Any]:
+        return {
+            "workflow_id": workflow_id,
+            "state": get_workflow_risk_state(user_id, workflow_id),
+            "evidence": list_workflow_evidence(
+                user_id=user_id,
+                workflow_id=workflow_id,
+                limit=evidence_limit,
+            ),
+            "decisions": list_workflow_decisions(
+                user_id=user_id,
+                workflow_id=workflow_id,
+                limit=decision_limit,
+            ),
+        }
+
+    def verification_metrics(self, *, user_id: str) -> Dict[str, Any]:
+        return verification_metrics(user_id=user_id)
+
+    def pending_verification_audits(
+        self,
+        *,
+        user_id: str,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        return pending_semantic_audits(user_id=user_id, limit=limit)
+
+    def submit_semantic_audit(
+        self,
+        *,
+        user_id: str,
+        decision_id: str,
+        outcome: str,
+        verifier: str,
+        tokens_used: int = 0,
+        notes: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return record_semantic_audit(
+            user_id=user_id,
+            decision_id=decision_id,
+            outcome=outcome,
+            verifier=verifier,
+            tokens_used=tokens_used,
+            notes=self.redact(notes) if notes else None,
+        )

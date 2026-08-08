@@ -1,4 +1,4 @@
-# Reliability-First AI Execution
+# Reliability-First AI Execution and Risk-Adaptive Verification v2
 
 Software uses a proposal-first execution architecture. Model output cannot
 directly trigger an important external action.
@@ -8,12 +8,16 @@ directly trigger an important external action.
 ```text
 Authenticated request
   -> Intent classifier
-  -> Risk detector
   -> JSON planner
-  -> Rule validator
-  -> Tool and data verifier
-  -> Human confirmation when required
+  -> Normalized evidence collector
+  -> Deterministic verification
+  -> Current action + cumulative workflow risk
+  -> Evidence strength + uncertainty
+  -> Policy, history, and token-cost ceiling
+  -> Code / small model / frontier model / human gate
+  -> ALLOW / RETRY / BLOCK / REVIEW
   -> Execution engine
+  -> Post-action verification
   -> Append-only audit
 ```
 
@@ -100,6 +104,92 @@ Verification uses actual system state:
 
 Qdrant data never authorizes an action.
 
+Risk-Adaptive Verification adds the following deterministic checks before any
+model-based verifier is considered:
+
+- schema and required fields
+- tool failures, exceptions, timeouts, authentication, and authorization
+- read/write/execute/send/delete/pay/privilege action classification
+- unknown and unexpected tools
+- duplicate non-idempotent actions and retry ceilings
+- expected versus observed state transitions
+- required independent evidence after a side effect
+- false-success contradictions between agent claims and tool/state evidence
+
+Unknown actions and tools start at elevated risk. Thresholds use risk bands and
+a hysteresis margin so a one-point score change cannot suddenly choose a much
+weaker verifier.
+
+## Cumulative Workflow Risk
+
+Every authenticated workflow has a compact durable state containing:
+
+```text
+sensitive data classes
+external side effects
+irreversible actions
+retry and failure history
+privilege level
+financial exposure
+policy violations
+verification token spend
+semantic-audit calibration history
+```
+
+The next action is scored against both its local consequence and this retained
+context. Raw evidence is stored separately from the trusted summary and remains
+authoritative. Contradictions and anomalies cause the decision record to expose
+the raw evidence references needed to reconstruct context.
+
+## Evidence and Verifier Routing
+
+Evidence strength is independent from both action risk and model confidence.
+Tool identifiers, state read-back, external confirmation, and independent
+sources strengthen evidence. Agent claims, copied confidence values, and model
+approval without traceable support do not.
+
+```text
+Level A  low risk + sufficient evidence       deterministic code
+Level B  limited consequence + uncertainty    small semantic verifier
+Level C  high uncertainty/consequence          frontier verifier
+Level S  critical or irreversible              human gate / strong verification
+```
+
+The evaluation API is provider-neutral. A model verifier supplies a normalized
+`decision` evidence event with supporting evidence ids, then re-evaluates the
+step. Human approval satisfies any lower verifier floor. If no required model
+verifier is connected, the safe result is `REVIEW`.
+
+## Token Cost Ceiling
+
+Each decision records original workflow tokens, verification tokens spent,
+remaining budget, expected next-verifier cost, retry cost, and normal,
+escalation, and emergency reserves. The Token Engine controls spending only
+after the safety level is known. Insufficient budget returns `REVIEW` or
+`BLOCK`; it never silently lowers the required verification level.
+
+## Selective Semantic Audits
+
+Level-A `ALLOW` decisions are deterministically sampled using an adaptive rate.
+The rate is bounded by policy and increases when audits discover hidden errors.
+Mandatory high-risk verification is never replaced by sampling.
+
+Audit outcomes are submitted through the authenticated audit endpoint as
+`passed`, `hidden_error`, `false_positive`, or `false_negative`.
+
+## Metrics
+
+`GET /api/ai/verification/metrics` exposes:
+
+- verification overhead
+- net token saving
+- false-positive and false-negative rates
+- audit discovery rate
+- escalation rate
+- decision latency
+- token cost per prevented failure
+- reliability gain per verification token
+
 ## Confirmation
 
 High-risk validation returns:
@@ -166,6 +256,10 @@ Tables:
 ```text
 ai_execution_requests
 ai_execution_audit_events
+risk_verification_workflows
+risk_verification_evidence
+risk_verification_decisions
+risk_verification_audits
 ```
 
 The request row stores the latest safe snapshot. Audit events append each

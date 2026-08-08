@@ -157,6 +157,73 @@ class AIExecutionAPITests(unittest.TestCase):
         self.assertEqual(dashboard.status_code, 200)
         self.assertIn('<script src="/ai_confirmation.js"></script>', dashboard.text)
 
+    def test_risk_adaptive_api_is_authenticated_and_persists_workflow_state(self):
+        with TestClient(app.app) as anonymous:
+            unauthorized = anonymous.post(
+                "/api/ai/verification/evaluate",
+                json={
+                    "workflow_id": "api-risk-workflow",
+                    "step_id": "step-1",
+                    "action": {"type": "read", "intent": "search_data"},
+                    "evidence": [],
+                },
+            )
+        self.assertEqual(unauthorized.status_code, 401)
+
+        response = self.client.post(
+            "/api/ai/verification/evaluate",
+            json={
+                "workflow_id": "api-risk-workflow",
+                "step_id": "step-1",
+                "action": {
+                    "type": "pay",
+                    "action_class": "pay",
+                    "irreversible": True,
+                    "side_effect": True,
+                },
+                "evidence": [
+                    {
+                        "event_type": "state",
+                        "source": "policy",
+                        "status": "confirmed",
+                        "success": True,
+                        "independent": True,
+                    }
+                ],
+                "metadata": {"original_tokens": 4000},
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["verification"]["decision"], "REVIEW")
+
+        workflow = self.client.get(
+            "/api/ai/verification/workflows/api-risk-workflow"
+        )
+        metrics = self.client.get("/api/ai/verification/metrics")
+        self.assertEqual(workflow.status_code, 200)
+        self.assertEqual(len(workflow.json()["decisions"]), 1)
+        self.assertEqual(metrics.status_code, 200)
+        self.assertGreaterEqual(metrics.json()["metrics"]["decision_count"], 1)
+
+    def test_decision_optimizer_and_dashboard_data_reject_anonymous_access(self):
+        validate_payload = {
+            "action_type": "change_model",
+            "target": "workflow-1",
+            "confidence": 90,
+            "reason": "Test decision",
+        }
+        with TestClient(app.app) as anonymous:
+            responses = [
+                anonymous.post("/api/decisions/validate", json=validate_payload),
+                anonymous.get("/api/decisions/pending"),
+                anonymous.post("/api/optimizer/run", json={}),
+                anonymous.get("/api/optimizer/history"),
+                anonymous.get("/api/optimizer/stats"),
+                anonymous.get("/api/dashboard/historical-trends"),
+                anonymous.get("/api/dashboard/sdk-workflows"),
+            ]
+        self.assertTrue(all(response.status_code == 401 for response in responses))
+
 
 if __name__ == "__main__":
     unittest.main()
