@@ -3,10 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Log in - Software</title>
-    <link rel="stylesheet" href="/saas.css">
+    <title>Sign in | Matrixs Reliability</title>
+    <link rel="stylesheet" href="/saas.css?v=20260808c">
+    <link rel="stylesheet" href="/ui.css?v=20260808c">
+    <script src="/ui.js?v=20260808c" defer></script>
   </head>
-  <body>
+  <body data-matrixs-page="reliability" class="auth-page">
     <header class="topbar">
       <a class="brand" href="/"><span class="brand-mark">S</span><strong>Software+</strong></a>
       <nav class="nav">
@@ -19,7 +21,7 @@
     <main class="auth-shell">
       <section class="auth-copy">
         <p class="eyebrow">Welcome back</p>
-        <h1>Log in to your <span class="accent-text">reliability workspace</span></h1>
+        <h1>Return to your <span class="accent-text">reliability command center</span></h1>
         <p class="muted">Use Clerk to sign in with email, Google, or GitHub. Your projects, workflows, memory, audit logs, API keys, and settings stay isolated to your user id.</p>
         <div class="auth-preview">
           <div class="auth-preview-row"><span>01</span><strong>Open your dashboard</strong><span class="muted">Clerk session</span></div>
@@ -28,7 +30,7 @@
         </div>
       </section>
       <section class="auth-card stack">
-        <h2>Continue with Clerk</h2>
+        <h2>Sign in securely</h2>
         <p class="muted">Clerk handles password sign-in, Google OAuth, GitHub OAuth, email verification, sessions, and reset links.</p>
         <button type="button" data-clerk-sign-in data-auth-redirect="/dashboard" data-loading-text="Opening Clerk...">Log in</button>
         <button type="button" class="secondary" data-clerk-reset data-auth-redirect="/dashboard" data-loading-text="Opening reset...">Reset password</button>

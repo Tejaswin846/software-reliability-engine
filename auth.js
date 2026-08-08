@@ -130,7 +130,7 @@
       clerkPromise = (async () => {
         const config = await loadConfig();
         if (!config.configured || !config.clerk_publishable_key) {
-          throw new Error("Clerk is not configured for this Software deployment.");
+          throw new Error("Clerk is not configured for this Matrixs deployment.");
         }
         try {
           await loadClerkSdk(config);
@@ -162,7 +162,7 @@
     return {
       id: user.id,
       email,
-      name: user.fullName || user.username || email || "Software user",
+      name: user.fullName || user.username || email || "Matrixs user",
       provider: "clerk",
     };
   }

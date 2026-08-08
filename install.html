@@ -3,10 +3,12 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Install Software SDK</title>
-    <link rel="stylesheet" href="/saas.css">
+    <title>Install the Matrixs SDK</title>
+    <link rel="stylesheet" href="/saas.css?v=20260808c">
+    <link rel="stylesheet" href="/ui.css?v=20260808c">
+    <script src="/ui.js?v=20260808c" defer></script>
   </head>
-  <body>
+  <body data-matrixs-page="reliability">
     <header class="topbar">
       <a class="brand" href="/"><span class="brand-mark">S</span><strong>Software+</strong></a>
       <nav class="nav">
@@ -33,7 +35,7 @@
       <section class="auth-card stack">
         <div>
           <p class="eyebrow">Step 1</p>
-          <h2>Install Software</h2>
+          <h2>Install Matrixs</h2>
           <p class="muted">Run one command in your terminal.</p>
         </div>
         <pre id="install-command-main" class="code-snippet">pip install software-sdk</pre>
@@ -52,7 +54,7 @@
         <div>
           <p class="eyebrow">Step 2</p>
           <h2>Get your API key</h2>
-          <p class="muted">After signing in, click once. Software creates a project and shows a key to paste into your app.</p>
+          <p class="muted">After signing in, click once. Matrixs creates a project and shows a key to paste into your app.</p>
         </div>
         <div class="button-row" data-auth-signed-out>
           <button type="button" data-clerk-sign-in data-auth-redirect="/install">Sign in to get API key</button>

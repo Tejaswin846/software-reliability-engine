@@ -22,7 +22,7 @@ import requests
 from jwt import PyJWKClient
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse
 from pydantic import BaseModel, Field
 import sentry_sdk
 
@@ -5887,13 +5887,27 @@ def docs_styles() -> FileResponse:
     return FileResponse(BASE_DIR / "docs.css")
 
 
+def _matrixs_docs_response(path: Path) -> HTMLResponse:
+    html = path.read_text(encoding="utf-8")
+    html = html.replace(
+        '<link rel="stylesheet" href="/docs.css">',
+        '<link rel="stylesheet" href="/docs.css?v=20260808c">'
+        '<link rel="stylesheet" href="/ui.css?v=20260808c">'
+        '<script src="/ui.js?v=20260808c" defer></script>',
+    )
+    html = html.replace("<body>", '<body data-matrixs-page="reliability" class="docs-page">', 1)
+    html = html.replace("Software Docs", "Matrixs Docs")
+    html = html.replace("Software Documentation", "Matrixs Documentation")
+    return HTMLResponse(html)
+
+
 @app.get("/developer-docs", include_in_schema=False)
-def developer_docs_page() -> FileResponse:
-    return FileResponse(BASE_DIR / "docs" / "index.html")
+def developer_docs_page() -> HTMLResponse:
+    return _matrixs_docs_response(BASE_DIR / "docs" / "index.html")
 
 
 @app.get("/docs/{page_slug}", include_in_schema=False)
-def developer_docs_detail(page_slug: str) -> FileResponse:
+def developer_docs_detail(page_slug: str) -> HTMLResponse:
     allowed_pages = {
         "quick-start",
         "getting-started",
@@ -5909,7 +5923,7 @@ def developer_docs_detail(page_slug: str) -> FileResponse:
     }
     if page_slug not in allowed_pages:
         raise HTTPException(status_code=404, detail="Documentation page not found.")
-    return FileResponse(BASE_DIR / "docs" / f"{page_slug}.html")
+    return _matrixs_docs_response(BASE_DIR / "docs" / f"{page_slug}.html")
 
 
 @app.get("/saas.css", include_in_schema=False)
