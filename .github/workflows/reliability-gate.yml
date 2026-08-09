@@ -27,6 +27,6 @@ jobs:
       - name: Check changed backend modules
         run: ruff check reliability_platform ai_execution/worker.py --select E4,E7,E9,F,I,UP,RUF,SIM --ignore N999
       - name: Run backend regression suite
-        run: pytest -q
+        run: python -m pytest -q
       - name: Check JavaScript SDK syntax
         run: node --check software_sdk_js/index.js
