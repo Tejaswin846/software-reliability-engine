@@ -1,6 +1,6 @@
 # Backend upgrade implementation
 
-Version 0.3.0 implements the reliability backend blueprint as an authenticated,
+Version 0.4.0 implements the reliability backend blueprint as an authenticated,
 tenant-scoped platform. The API remains fail-closed for authorization, trusted-state
 checks, and durable execution finalization.
 
@@ -30,12 +30,24 @@ checks, and durable execution finalization.
   alert rules, incidents, simulation-only replay, and reliability calibration
 - Protected-vs-unprotected benchmarks, long-horizon goal-drift detection,
   sub-agent cost/risk/cancellation accounting, search filters, and audit export
+- Predictive health snapshots covering failure, retry, timeout, latency, token,
+  evidence, contradiction, queue-delay, and fallback signals, with trend/anomaly
+  analysis and confidence-scored failure forecasts
+- SLO evaluation with compliance, error-budget, burn-rate, and healthy/degraded/
+  critical state reporting
+- Stateful dependency circuit breakers with failure windows, cooldowns, half-open
+  probes, safe provider fallback chains, and independently verified recovery
+- Deduplicated incident and alert lifecycles with acknowledgement, investigation,
+  resolution, automatic regression-dataset promotion, and dashboard/Slack/email/
+  webhook notification delivery records
+- Evidence-backed human review cases with permission-scoped confirm, compensation,
+  resume, and terminate decisions
 - Tenant quotas, retention, SSO/encryption/region controls, scoped service accounts,
   hash-only keys, key rotation, and confirmed tenant-data deletion
 
 ## SDK ingestion
 
-Python SDK 0.3.0 supports observations, OTLP batches, and framework events. The
+Python SDK 0.4.0 supports observations, OTLP batches, and framework events. The
 dependency-free Node.js SDK is in `software_sdk_js` and supports the same telemetry
 plus tool wrapping. Cloud ingestion requires a project API key or a scoped service
 account key with `telemetry:write`.

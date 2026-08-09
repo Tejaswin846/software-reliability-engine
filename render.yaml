@@ -40,6 +40,16 @@ services:
         value: "false"
       - key: SOFTWARE_OUTBOX_WORKER_ENABLED
         value: "true"
+      - key: SOFTWARE_ALERT_SLACK_WEBHOOK_URL
+        sync: false
+      - key: SOFTWARE_ALERT_EMAIL_WEBHOOK_URL
+        sync: false
+      - key: SOFTWARE_ALERT_WEBHOOK_URL
+        sync: false
+      - key: SOFTWARE_ALERT_WEBHOOK_TOKEN
+        sync: false
+      - key: SOFTWARE_ALERT_ALLOW_CUSTOM_WEBHOOKS
+        value: "false"
       - key: CLARITY_PROJECT_ID
         value: xc0zbrjy3z
       - key: QDRANT_URL

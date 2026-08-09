@@ -142,7 +142,9 @@ class AIExecutionAPITests(unittest.TestCase):
 
         self.assertEqual(validated.status_code, 200)
         self.assertTrue(validated.json()["confirmation_required"])
-        self.assertEqual(validated.json()["confirmation_card"]["title"], "Review before running")
+        self.assertEqual(
+            validated.json()["confirmation_card"]["title"], "Review before running"
+        )
         self.assertEqual(blocked.status_code, 409)
         self.assertEqual(confirmed.status_code, 200)
         self.assertEqual(executed.status_code, 200)
@@ -196,9 +198,7 @@ class AIExecutionAPITests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["verification"]["decision"], "REVIEW")
 
-        workflow = self.client.get(
-            "/api/ai/verification/workflows/api-risk-workflow"
-        )
+        workflow = self.client.get("/api/ai/verification/workflows/api-risk-workflow")
         metrics = self.client.get("/api/ai/verification/metrics")
         self.assertEqual(workflow.status_code, 200)
         self.assertEqual(len(workflow.json()["decisions"]), 1)
@@ -221,6 +221,34 @@ class AIExecutionAPITests(unittest.TestCase):
                 anonymous.get("/api/optimizer/stats"),
                 anonymous.get("/api/dashboard/historical-trends"),
                 anonymous.get("/api/dashboard/sdk-workflows"),
+            ]
+        self.assertTrue(all(response.status_code == 401 for response in responses))
+
+    def test_predictive_resilience_routes_reject_anonymous_access(self):
+        with TestClient(app.app) as anonymous:
+            responses = [
+                anonymous.get("/api/reliability/health/history"),
+                anonymous.get("/api/reliability/incidents"),
+                anonymous.get("/api/reliability/circuits"),
+                anonymous.post(
+                    "/api/reliability/health/predict",
+                    json={
+                        "project_id": "project-1",
+                        "component_type": "provider",
+                        "component_name": "provider-a",
+                    },
+                ),
+                anonymous.post(
+                    "/api/reliability/reviews",
+                    json={
+                        "project_id": "project-1",
+                        "workflow_id": "workflow-1",
+                        "reason": "review",
+                        "evidence_bundle": {},
+                        "permissions": ["terminate"],
+                        "recommended_action": "terminate",
+                    },
+                ),
             ]
         self.assertTrue(all(response.status_code == 401 for response in responses))
 

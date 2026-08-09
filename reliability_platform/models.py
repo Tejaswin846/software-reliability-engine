@@ -229,3 +229,96 @@ class ServiceAccountRotationRequest(BaseModel):
 class TenantDeletionRequest(BaseModel):
     project_id: str | None = Field(None, max_length=180)
     confirmation: str = Field(..., min_length=6, max_length=6)
+
+
+class HealthPredictionRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    component_type: Literal[
+        "project", "provider", "tool", "model", "agent", "database", "redis", "worker"
+    ] = "project"
+    component_name: str = Field("all", min_length=1, max_length=300)
+    window_minutes: int = Field(10, ge=5, le=1440)
+    preventive_actions: bool = True
+
+
+class SLORequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    name: str = Field(..., min_length=1, max_length=300)
+    metric: str = Field(..., min_length=1, max_length=180)
+    operator: Literal["lt", "lte", "gt", "gte"]
+    target: float
+    window_minutes: int = Field(60, ge=5, le=43200)
+    severity: Literal["low", "medium", "high", "critical"] = "high"
+
+
+class SLOEvaluationRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    metrics: dict[str, float]
+
+
+class CircuitRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    dependency_type: Literal[
+        "provider", "tool", "database", "vector_store", "redis", "api", "worker"
+    ]
+    dependency_name: str = Field(..., min_length=1, max_length=300)
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class CircuitDecisionRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    dependency_type: str = Field(..., min_length=1, max_length=80)
+    dependency_name: str = Field(..., min_length=1, max_length=300)
+    fallback_chain: list[str] = Field(default_factory=list, max_length=20)
+
+
+class DependencyResultRequest(BaseModel):
+    circuit_id: str = Field(..., min_length=1, max_length=180)
+    success: bool
+    latency_ms: float = Field(0, ge=0)
+    error_type: str | None = Field(None, max_length=180)
+    selected_dependency: str | None = Field(None, max_length=300)
+
+
+class RecoveryVerificationRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    workflow_id: str = Field(..., min_length=1, max_length=180)
+    failure_type: str = Field(..., min_length=1, max_length=180)
+    attempt: int = Field(1, ge=1, le=20)
+    strategy: str | None = Field(None, max_length=180)
+    before_state: dict[str, Any]
+    after_state: dict[str, Any]
+    independent_evidence: dict[str, Any]
+    expected_state: dict[str, Any]
+
+
+class IncidentTransitionRequest(BaseModel):
+    action: Literal["acknowledge", "investigate", "resolve", "reopen"]
+    actor: str = Field(..., min_length=1, max_length=180)
+    resolution: str | None = Field(None, max_length=4000)
+
+
+class AlertTransitionRequest(BaseModel):
+    action: Literal["acknowledge", "resolve"]
+    actor: str = Field(..., min_length=1, max_length=180)
+    resolution: str | None = Field(None, max_length=4000)
+
+
+class HumanReviewRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    workflow_id: str = Field(..., min_length=1, max_length=180)
+    reason: str = Field(..., min_length=1, max_length=4000)
+    evidence_bundle: dict[str, Any]
+    permissions: list[
+        Literal["confirm_state", "approve_compensation", "resume", "terminate"]
+    ] = Field(..., min_length=1, max_length=4)
+    recommended_action: str = Field(..., min_length=1, max_length=180)
+    observation_id: str | None = Field(None, max_length=180)
+    decision_id: str | None = Field(None, max_length=180)
+
+
+class HumanReviewDecisionRequest(BaseModel):
+    reviewer: str = Field(..., min_length=1, max_length=180)
+    action: Literal["confirm_state", "approve_compensation", "resume", "terminate"]
+    notes: str | None = Field(None, max_length=4000)
+    resume_payload: dict[str, Any] = Field(default_factory=dict)

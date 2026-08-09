@@ -1,6 +1,6 @@
 {
   "name": "@matrixs/reliability",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Observations-first Matrixs reliability SDK for JavaScript and TypeScript agents.",
   "type": "module",
   "main": "./index.js",

@@ -5,7 +5,7 @@ import os
 import sqlite3
 import threading
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +50,14 @@ def connect() -> sqlite3.Connection:
     return db
 
 
+def _ensure_column(
+    db: sqlite3.Connection, table: str, column: str, definition: str
+) -> None:
+    existing = {row["name"] for row in db.execute(f"PRAGMA table_info({table})")}
+    if column not in existing:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
 @contextmanager
 def transaction(*, immediate: bool = False) -> Iterator[sqlite3.Connection]:
     initialize()
@@ -73,7 +81,7 @@ def initialize() -> None:
     with _INIT_LOCK:
         if database_key in _INITIALIZED and DB_PATH.exists():
             return
-        with connect() as db:
+        with closing(connect()) as db, db:
             db.execute("PRAGMA journal_mode = WAL")
             db.executescript(
                 """
@@ -445,6 +453,123 @@ def initialize() -> None:
                     UNIQUE(incident_id, workflow_id, failure_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS reliability_notification_deliveries (
+                    delivery_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT,
+                    incident_id TEXT REFERENCES reliability_incidents(incident_id) ON DELETE CASCADE,
+                    alert_id TEXT REFERENCES reliability_alerts(alert_id) ON DELETE CASCADE,
+                    destination_type TEXT NOT NULL,
+                    destination_ref TEXT,
+                    status TEXT NOT NULL CHECK (status IN ('delivered', 'failed', 'skipped')),
+                    response_code INTEGER,
+                    error TEXT,
+                    attempt INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS reliability_health_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT,
+                    component_type TEXT NOT NULL,
+                    component_name TEXT NOT NULL,
+                    window_minutes INTEGER NOT NULL,
+                    sample_count INTEGER NOT NULL,
+                    signals_json TEXT NOT NULL DEFAULT '{}',
+                    baseline_json TEXT NOT NULL DEFAULT '{}',
+                    anomalies_json TEXT NOT NULL DEFAULT '{}',
+                    trends_json TEXT NOT NULL DEFAULT '{}',
+                    failure_probability REAL NOT NULL,
+                    confidence REAL NOT NULL,
+                    health_state TEXT NOT NULL CHECK (health_state IN ('healthy', 'degraded', 'critical')),
+                    recommended_actions_json TEXT NOT NULL DEFAULT '[]',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS reliability_slos (
+                    slo_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT,
+                    name TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    operator TEXT NOT NULL,
+                    target REAL NOT NULL,
+                    window_minutes INTEGER NOT NULL DEFAULT 60,
+                    severity TEXT NOT NULL DEFAULT 'high',
+                    active INTEGER NOT NULL DEFAULT 1,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, project_id, name)
+                );
+
+                CREATE TABLE IF NOT EXISTS reliability_slo_evaluations (
+                    evaluation_id TEXT PRIMARY KEY,
+                    slo_id TEXT NOT NULL REFERENCES reliability_slos(slo_id) ON DELETE CASCADE,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT,
+                    actual REAL NOT NULL,
+                    compliant INTEGER NOT NULL,
+                    error_budget_remaining REAL NOT NULL,
+                    burn_rate REAL NOT NULL,
+                    health_state TEXT NOT NULL,
+                    window_started_at TEXT NOT NULL,
+                    window_ended_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS reliability_circuit_breakers (
+                    circuit_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT,
+                    dependency_type TEXT NOT NULL,
+                    dependency_name TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK (state IN ('closed', 'open', 'half_open')),
+                    failure_threshold REAL NOT NULL DEFAULT 0.5,
+                    minimum_calls INTEGER NOT NULL DEFAULT 5,
+                    consecutive_failure_limit INTEGER NOT NULL DEFAULT 3,
+                    cooldown_seconds INTEGER NOT NULL DEFAULT 60,
+                    window_seconds INTEGER NOT NULL DEFAULT 300,
+                    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                    consecutive_successes INTEGER NOT NULL DEFAULT 0,
+                    fallback_chain_json TEXT NOT NULL DEFAULT '[]',
+                    opened_at TEXT,
+                    probe_after TEXT,
+                    last_failure_at TEXT,
+                    last_success_at TEXT,
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(user_id, project_id, dependency_type, dependency_name)
+                );
+
+                CREATE TABLE IF NOT EXISTS reliability_circuit_events (
+                    event_id TEXT PRIMARY KEY,
+                    circuit_id TEXT NOT NULL REFERENCES reliability_circuit_breakers(circuit_id) ON DELETE CASCADE,
+                    success INTEGER NOT NULL,
+                    latency_ms REAL NOT NULL DEFAULT 0,
+                    error_type TEXT,
+                    selected_dependency TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS reliability_recovery_attempts (
+                    recovery_id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    project_id TEXT,
+                    workflow_id TEXT NOT NULL,
+                    failure_type TEXT NOT NULL,
+                    strategy TEXT NOT NULL,
+                    attempt INTEGER NOT NULL,
+                    before_state_json TEXT NOT NULL DEFAULT '{}',
+                    after_state_json TEXT NOT NULL DEFAULT '{}',
+                    independent_evidence_json TEXT NOT NULL DEFAULT '{}',
+                    checks_json TEXT NOT NULL DEFAULT '[]',
+                    verified INTEGER NOT NULL DEFAULT 0,
+                    decision TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS reliability_component_calibration (
                     calibration_id TEXT PRIMARY KEY,
                     user_id TEXT NOT NULL,
@@ -611,20 +736,65 @@ def initialize() -> None:
                     ON reliability_service_accounts(user_id, project_id, active);
                 CREATE INDEX IF NOT EXISTS idx_benchmarks_owner
                     ON reliability_protected_benchmarks(user_id, project_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_health_snapshots_owner
+                    ON reliability_health_snapshots(user_id, project_id, component_type, component_name, created_at);
+                CREATE INDEX IF NOT EXISTS idx_slos_owner
+                    ON reliability_slos(user_id, project_id, active);
+                CREATE INDEX IF NOT EXISTS idx_circuits_owner
+                    ON reliability_circuit_breakers(user_id, project_id, state, dependency_type);
+                CREATE INDEX IF NOT EXISTS idx_circuit_events_window
+                    ON reliability_circuit_events(circuit_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_notifications_incident
+                    ON reliability_notification_deliveries(user_id, incident_id, created_at);
+                CREATE INDEX IF NOT EXISTS idx_recovery_workflow
+                    ON reliability_recovery_attempts(user_id, workflow_id, created_at);
                 """
             )
+            for table, column, definition in (
+                ("reliability_incidents", "acknowledged_at", "TEXT"),
+                ("reliability_incidents", "acknowledged_by", "TEXT"),
+                ("reliability_incidents", "resolved_at", "TEXT"),
+                ("reliability_incidents", "resolved_by", "TEXT"),
+                ("reliability_incidents", "resolution", "TEXT"),
+                ("reliability_incidents", "regression_dataset_id", "TEXT"),
+                ("reliability_alerts", "acknowledged_at", "TEXT"),
+                ("reliability_alerts", "acknowledged_by", "TEXT"),
+                ("reliability_alerts", "resolution", "TEXT"),
+                ("reliability_alerts", "repeat_count", "INTEGER NOT NULL DEFAULT 1"),
+                ("reliability_alerts", "updated_at", "TEXT"),
+                (
+                    "reliability_annotations",
+                    "evidence_bundle_json",
+                    "TEXT NOT NULL DEFAULT '{}'",
+                ),
+                (
+                    "reliability_annotations",
+                    "permissions_json",
+                    "TEXT NOT NULL DEFAULT '[]'",
+                ),
+                ("reliability_annotations", "recommended_action", "TEXT"),
+                ("reliability_annotations", "action_taken", "TEXT"),
+                (
+                    "reliability_annotations",
+                    "resume_payload_json",
+                    "TEXT NOT NULL DEFAULT '{}'",
+                ),
+                ("reliability_annotations", "assigned_at", "TEXT"),
+                ("reliability_annotations", "decided_at", "TEXT"),
+            ):
+                _ensure_column(db, table, column, definition)
         _INITIALIZED.add(database_key)
 
 
 def rows(query: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
     initialize()
-    with connect() as db:
+    with closing(connect()) as db:
         return [dict(row) for row in db.execute(query, params).fetchall()]
 
 
 def row(query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
     initialize()
-    with connect() as db:
+    with closing(connect()) as db:
         result = db.execute(query, params).fetchone()
         return dict(result) if result is not None else None
 

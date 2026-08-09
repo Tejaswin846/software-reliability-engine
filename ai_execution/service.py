@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import socket
+import time
 import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
@@ -365,6 +366,9 @@ def create_plan(
                 "target": details.get("target"),
                 "data_affected": details.get("data_affected") or details.get("target"),
                 "arguments": arguments,
+                "fallback_tools": list(details.get("fallback_tools") or []),
+                "fallback_safe": bool(details.get("fallback_safe")),
+                "idempotent": bool(details.get("idempotent")),
             }
         ]
 
@@ -1257,15 +1261,179 @@ class AIExecutionService:
         intent = plan["intent"]
         tool_slug = _normalized_text(action.get("tool_slug")).upper()
         if tool_slug:
-            return self.execute_tool(
-                state["user_id"],
-                tool_slug,
-                action.get("arguments") or {},
-                workflow_id=state.get("workflow_id"),
-                agent_name="reliability-first-execution-engine",
-                chat_id=state.get("chat_id"),
-                return_to=state.get("return_to") or "/",
+            fallback_tools = [
+                _normalized_text(item).upper()
+                for item in action.get("fallback_tools") or []
+                if _normalized_text(item)
+            ]
+            fallback_safe = bool(
+                action.get("fallback_safe")
+                or action.get("idempotent")
+                or plan.get("intent") in {"search_data", "answer_question", "summarize"}
             )
+            if self.reliability_platform is None:
+                return self.execute_tool(
+                    state["user_id"],
+                    tool_slug,
+                    action.get("arguments") or {},
+                    workflow_id=state.get("workflow_id"),
+                    agent_name="reliability-first-execution-engine",
+                    chat_id=state.get("chat_id"),
+                    return_to=state.get("return_to") or "/",
+                )
+            gate = self.reliability_platform.before_dependency_call(
+                user_id=state["user_id"],
+                project_id=self._platform_project_id(state),
+                dependency_type="tool",
+                dependency_name=tool_slug,
+                fallback_chain=fallback_tools,
+            )
+            if gate["decision"] == "BLOCK" or (
+                gate["decision"] == "FALLBACK" and not fallback_safe
+            ):
+                return {
+                    "ok": False,
+                    "error": "Dependency circuit is open and no safe fallback is available.",
+                    "circuit_breaker": gate,
+                }
+            candidates = (
+                list(gate.get("fallback_chain") or [])
+                if gate["decision"] == "FALLBACK"
+                else [tool_slug, *(fallback_tools if fallback_safe else [])]
+            )
+            attempts = []
+            initial_failure: dict[str, Any] | None = None
+            for candidate in list(dict.fromkeys(candidates)):
+                candidate_gate = (
+                    gate
+                    if candidate == tool_slug
+                    else self.reliability_platform.before_dependency_call(
+                        user_id=state["user_id"],
+                        project_id=self._platform_project_id(state),
+                        dependency_type="tool",
+                        dependency_name=candidate,
+                    )
+                )
+                if candidate_gate["decision"] == "BLOCK":
+                    attempts.append(
+                        {
+                            "tool": candidate,
+                            "ok": False,
+                            "skipped": "circuit_open",
+                        }
+                    )
+                    continue
+                started = time.perf_counter()
+                try:
+                    result = self.execute_tool(
+                        state["user_id"],
+                        candidate,
+                        action.get("arguments") or {},
+                        workflow_id=state.get("workflow_id"),
+                        agent_name="reliability-first-execution-engine",
+                        chat_id=state.get("chat_id"),
+                        return_to=state.get("return_to") or "/",
+                    )
+                except Exception as error:  # noqa: BLE001 - provider boundary
+                    self.capture_error(
+                        error,
+                        category="dependency_failover",
+                        user_id=state["user_id"],
+                        request_id=state.get("request_id"),
+                        tool_slug=candidate,
+                    )
+                    result = {
+                        "ok": False,
+                        "error": self.redact(str(error))[:500]
+                        or "Dependency call failed.",
+                    }
+                latency_ms = (time.perf_counter() - started) * 1000
+                error_text = _normalized_text(result.get("error")).lower()
+                error_type = (
+                    "provider_timeout"
+                    if "timeout" in error_text
+                    else "rate_limit"
+                    if "rate" in error_text and "limit" in error_text
+                    else "expired_authentication"
+                    if "auth" in error_text or "credential" in error_text
+                    else "invalid_json"
+                    if "json" in error_text
+                    else "duplicate_action"
+                    if "duplicate" in error_text
+                    else "provider_outage"
+                )
+                circuit = self.reliability_platform.record_dependency_result(
+                    user_id=state["user_id"],
+                    circuit_id=candidate_gate["circuit_id"],
+                    success=bool(result.get("ok")),
+                    latency_ms=latency_ms,
+                    error_type=None if result.get("ok") else error_type,
+                    selected_dependency=candidate,
+                )
+                attempts.append(
+                    {
+                        "tool": candidate,
+                        "ok": bool(result.get("ok")),
+                        "latency_ms": round(latency_ms, 2),
+                        "circuit_state": circuit["state"],
+                    }
+                )
+                if not result.get("ok"):
+                    initial_failure = initial_failure or dict(result)
+                    continue
+                if candidate != tool_slug or gate["decision"] == "FALLBACK":
+                    result_data = (
+                        result.get("data")
+                        if isinstance(result.get("data"), dict)
+                        else {}
+                    )
+                    receipt = (
+                        result.get("receipt")
+                        or result.get("verification_receipt")
+                        or result_data.get("receipt")
+                        or result_data.get("id")
+                    )
+                    recovery = self.reliability_platform.verify_recovery(
+                        user_id=state["user_id"],
+                        project_id=self._platform_project_id(state),
+                        workflow_id=self._control_workflow_id(state),
+                        failure_type="provider_outage",
+                        attempt=len(attempts),
+                        before_state=initial_failure
+                        or {"ok": False, "circuit_state": gate["circuit_state"]},
+                        after_state=result,
+                        independent_evidence={
+                            "verified": bool(result.get("verified") or receipt),
+                            "receipt": receipt,
+                        },
+                        expected_state={"ok": True},
+                        strategy="fallback_provider",
+                    )
+                    if not recovery["verified"]:
+                        return {
+                            "ok": False,
+                            "error": "Fallback completed but recovery could not be verified.",
+                            "recovery": recovery,
+                            "failover_attempts": attempts,
+                        }
+                    result = {
+                        **result,
+                        "fallback_used": True,
+                        "selected_tool": candidate,
+                        "recovery": recovery,
+                    }
+                return {**result, "failover_attempts": attempts}
+            return {
+                **(
+                    initial_failure
+                    or {"ok": False, "error": "All dependencies failed."}
+                ),
+                "ok": False,
+                "failover_attempts": attempts,
+                "recovery_plan": self.reliability_platform.recovery_plan(
+                    "provider_outage", max(1, len(attempts))
+                ),
+            }
         if intent == "search_data":
             return {
                 "ok": True,

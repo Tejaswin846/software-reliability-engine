@@ -15,18 +15,26 @@ from .core import (
 from .models import (
     AlertEvaluateRequest,
     AlertRuleRequest,
+    AlertTransitionRequest,
     AnnotationCompleteRequest,
     AnnotationRequest,
     CalibrationRequest,
     CausalEdgeRequest,
     CheckpointRequest,
     CIGateRequest,
+    CircuitDecisionRequest,
+    CircuitRequest,
     DatasetCaseRequest,
     DatasetRequest,
+    DependencyResultRequest,
     DriftRequest,
     EvidenceRequest,
     ExperimentRequest,
     GoalRequest,
+    HealthPredictionRequest,
+    HumanReviewDecisionRequest,
+    HumanReviewRequest,
+    IncidentTransitionRequest,
     ObservationRequest,
     PolicyEvaluateRequest,
     PolicyRequest,
@@ -34,6 +42,7 @@ from .models import (
     PromoteClusterRequest,
     ProtectedBenchmarkRequest,
     RecoveryRequest,
+    RecoveryVerificationRequest,
     ReplayRequest,
     ReverifyRequest,
     RootCauseRequest,
@@ -41,6 +50,8 @@ from .models import (
     SagaStepRequest,
     ServiceAccountRequest,
     ServiceAccountRotationRequest,
+    SLOEvaluationRequest,
+    SLORequest,
     SubagentRequest,
     TelemetryRequest,
     TenantControlsRequest,
@@ -123,6 +134,16 @@ def create_reliability_platform_router(
                 "adaptive_sampling": True,
                 "alerts": True,
                 "incidents": True,
+                "incident_lifecycle": True,
+                "notification_delivery": True,
+                "predictive_health": True,
+                "failure_forecasting": True,
+                "slos": True,
+                "circuit_breakers": True,
+                "provider_failover": True,
+                "verified_recovery": True,
+                "human_review_queue": True,
+                "incident_regression_automation": True,
                 "replay": True,
                 "calibration": True,
                 "long_horizon_goals": True,
@@ -135,6 +156,133 @@ def create_reliability_platform_router(
                 "tenant_data_deletion": True,
                 "tenant_controls": True,
             },
+        }
+
+    @router.post("/api/reliability/health/predict")
+    def predict_health(
+        payload: HealthPredictionRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "health": _run(
+                lambda: platform.predict_health(
+                    user_id=user["id"],
+                    project_id=payload.project_id,
+                    component_type=payload.component_type,
+                    component_name=payload.component_name,
+                    window_minutes=payload.window_minutes,
+                    preventive_actions=payload.preventive_actions,
+                )
+            ),
+        }
+
+    @router.get("/api/reliability/health/history")
+    def health_history(
+        project_id: str | None = Query(None, max_length=180),
+        limit: int = Query(100, ge=1, le=500),
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "snapshots": platform.health_history(
+                user_id=user["id"], project_id=project_id, limit=limit
+            ),
+        }
+
+    @router.post("/api/reliability/slos")
+    def create_slo(payload: SLORequest, user: dict[str, Any] = Depends(current_user)):
+        return {
+            "ok": True,
+            "slo": _run(
+                lambda: platform.create_slo(
+                    user_id=user["id"],
+                    project_id=payload.project_id,
+                    name=payload.name,
+                    metric=payload.metric,
+                    operator=payload.operator,
+                    target=payload.target,
+                    window_minutes=payload.window_minutes,
+                    severity=payload.severity,
+                )
+            ),
+        }
+
+    @router.post("/api/reliability/slos/evaluate")
+    def evaluate_slos(
+        payload: SLOEvaluationRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "slo_health": platform.evaluate_slos(
+                user_id=user["id"],
+                project_id=payload.project_id,
+                metrics=payload.metrics,
+            ),
+        }
+
+    @router.post("/api/reliability/circuits")
+    def configure_circuit(
+        payload: CircuitRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "circuit": platform.configure_circuit(
+                user_id=user["id"],
+                project_id=payload.project_id,
+                dependency_type=payload.dependency_type,
+                dependency_name=payload.dependency_name,
+                config=payload.config,
+            ),
+        }
+
+    @router.get("/api/reliability/circuits")
+    def list_circuits(
+        project_id: str | None = Query(None, max_length=180),
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "circuits": platform.list_circuits(
+                user_id=user["id"], project_id=project_id
+            ),
+        }
+
+    @router.post("/api/reliability/circuits/before-call")
+    def before_dependency_call(
+        payload: CircuitDecisionRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "routing": platform.before_dependency_call(
+                user_id=user["id"],
+                project_id=payload.project_id,
+                dependency_type=payload.dependency_type,
+                dependency_name=payload.dependency_name,
+                fallback_chain=payload.fallback_chain,
+            ),
+        }
+
+    @router.post("/api/reliability/circuits/result")
+    def dependency_result(
+        payload: DependencyResultRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "circuit": _run(
+                lambda: platform.record_dependency_result(
+                    user_id=user["id"],
+                    circuit_id=payload.circuit_id,
+                    success=payload.success,
+                    latency_ms=payload.latency_ms,
+                    error_type=payload.error_type,
+                    selected_dependency=payload.selected_dependency,
+                )
+            ),
         }
 
     @router.post("/api/reliability/observations/ingest")
@@ -479,6 +627,27 @@ def create_reliability_platform_router(
             "recovery": platform.recovery_plan(payload.failure_type, payload.attempt),
         }
 
+    @router.post("/api/reliability/recovery/verify")
+    def verify_recovery(
+        payload: RecoveryVerificationRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "recovery": platform.verify_recovery(
+                user_id=user["id"],
+                project_id=payload.project_id,
+                workflow_id=payload.workflow_id,
+                failure_type=payload.failure_type,
+                attempt=payload.attempt,
+                strategy=payload.strategy,
+                before_state=payload.before_state,
+                after_state=payload.after_state,
+                independent_evidence=payload.independent_evidence,
+                expected_state=payload.expected_state,
+            ),
+        }
+
     @router.post("/api/reliability/sagas")
     def create_saga(payload: SagaRequest, user: dict[str, Any] = Depends(current_user)):
         return {
@@ -630,6 +799,62 @@ def create_reliability_platform_router(
             ),
         }
 
+    @router.post("/api/reliability/reviews")
+    def enqueue_human_review(
+        payload: HumanReviewRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "review": _run(
+                lambda: platform.enqueue_human_review(
+                    user_id=user["id"],
+                    project_id=payload.project_id,
+                    workflow_id=payload.workflow_id,
+                    reason=payload.reason,
+                    evidence_bundle=payload.evidence_bundle,
+                    permissions=payload.permissions,
+                    recommended_action=payload.recommended_action,
+                    observation_id=payload.observation_id,
+                    decision_id=payload.decision_id,
+                )
+            ),
+        }
+
+    @router.get("/api/reliability/reviews/{review_id}")
+    def get_human_review(
+        review_id: str,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "review": _run(
+                lambda: platform.get_human_review(
+                    user_id=user["id"], review_id=review_id
+                )
+            ),
+        }
+
+    @router.post("/api/reliability/reviews/{review_id}/decision")
+    def decide_human_review(
+        review_id: str,
+        payload: HumanReviewDecisionRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "review": _run(
+                lambda: platform.decide_human_review(
+                    user_id=user["id"],
+                    review_id=review_id,
+                    reviewer=user["id"],
+                    action=payload.action,
+                    notes=payload.notes,
+                    resume_payload=payload.resume_payload,
+                )
+            ),
+        }
+
     @router.post("/api/reliability/drift/detect")
     def drift(payload: DriftRequest, user: dict[str, Any] = Depends(current_user)):
         return {
@@ -729,6 +954,75 @@ def create_reliability_platform_router(
                 project_id=payload.project_id,
                 signals=payload.signals,
                 context=payload.context,
+            ),
+        }
+
+    @router.post("/api/reliability/alerts/{alert_id}/transition")
+    def transition_alert(
+        alert_id: str,
+        payload: AlertTransitionRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "alert": _run(
+                lambda: platform.transition_alert(
+                    user_id=user["id"],
+                    alert_id=alert_id,
+                    action=payload.action,
+                    actor=user["id"],
+                    resolution=payload.resolution,
+                )
+            ),
+        }
+
+    @router.get("/api/reliability/incidents")
+    def incidents(
+        project_id: str | None = Query(None, max_length=180),
+        status_filter: str | None = Query(None, alias="status", max_length=80),
+        limit: int = Query(100, ge=1, le=500),
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "incidents": platform.list_incidents(
+                user_id=user["id"],
+                project_id=project_id,
+                status=status_filter,
+                limit=limit,
+            ),
+        }
+
+    @router.get("/api/reliability/incidents/{incident_id}")
+    def incident(
+        incident_id: str,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "incident": _run(
+                lambda: platform.get_incident(
+                    user_id=user["id"], incident_id=incident_id
+                )
+            ),
+        }
+
+    @router.post("/api/reliability/incidents/{incident_id}/transition")
+    def transition_incident(
+        incident_id: str,
+        payload: IncidentTransitionRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        return {
+            "ok": True,
+            "incident": _run(
+                lambda: platform.transition_incident(
+                    user_id=user["id"],
+                    incident_id=incident_id,
+                    action=payload.action,
+                    actor=user["id"],
+                    resolution=payload.resolution,
+                )
             ),
         }
 

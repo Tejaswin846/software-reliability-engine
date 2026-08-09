@@ -174,15 +174,23 @@ except ImportError:
     )
 
 try:
-    from .reliability_platform import ReliabilityPlatform, create_reliability_platform_router
+    from .reliability_platform import (
+        ReliabilityNotificationDispatcher,
+        ReliabilityPlatform,
+        create_reliability_platform_router,
+    )
 except ImportError:
-    from reliability_platform import ReliabilityPlatform, create_reliability_platform_router
+    from reliability_platform import (
+        ReliabilityNotificationDispatcher,
+        ReliabilityPlatform,
+        create_reliability_platform_router,
+    )
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("SOFTWARE_APP_NAME", "Software Reliability Engine")
-APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.3.0")
+APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.4.0")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -5540,7 +5548,10 @@ app.include_router(
     )
 )
 
-RELIABILITY_PLATFORM = ReliabilityPlatform(scrub=scrub_sensitive_data)
+RELIABILITY_PLATFORM = ReliabilityPlatform(
+    scrub=scrub_sensitive_data,
+    notifier=ReliabilityNotificationDispatcher(scrub=scrub_sensitive_data),
+)
 
 AI_EXECUTION_SERVICE = AIExecutionService(
     get_integrations=list_composio_integrations,

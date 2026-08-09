@@ -65,7 +65,7 @@ SENTRY_DSN=https://public-key@o0.ingest.sentry.io/0
 SENTRY_TRACES_SAMPLE_RATE=0.2
 SENTRY_ENABLE_LOGS=true
 SENTRY_ENVIRONMENT=production
-SENTRY_RELEASE=software@0.2.0
+SENTRY_RELEASE=software@0.4.0
 ```
 
 `SENTRY_DSN` is optional locally. When it is absent, monitoring is disabled

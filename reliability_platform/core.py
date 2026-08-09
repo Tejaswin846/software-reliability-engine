@@ -119,8 +119,14 @@ def _matches(actual: Any, operator: str, expected: Any) -> bool:
 
 
 class ReliabilityPlatform:
-    def __init__(self, *, scrub: Callable[[Any], Any] | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        scrub: Callable[[Any], Any] | None = None,
+        notifier: Any | None = None,
+    ) -> None:
         self.scrub = scrub or (lambda value: value)
+        self.notifier = notifier
         storage.initialize()
 
     def _redact(
@@ -177,6 +183,70 @@ class ReliabilityPlatform:
                 value,
             )
         return self.scrub(value)
+
+    def _notify(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        destinations: list[Any],
+        event: dict[str, Any],
+        incident_id: str | None = None,
+        alert_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        unique: list[Any] = []
+        seen: set[str] = set()
+        for destination in destinations:
+            fingerprint = storage.dumps(destination)
+            if fingerprint not in seen:
+                seen.add(fingerprint)
+                unique.append(destination)
+        if not unique:
+            return []
+        if self.notifier is None:
+            results = [
+                {
+                    "destination_type": str(
+                        destination.get("type")
+                        if isinstance(destination, dict)
+                        else destination
+                    ),
+                    "destination_ref": None,
+                    "status": "skipped",
+                    "response_code": None,
+                    "error": "Notification dispatcher is not configured.",
+                }
+                for destination in unique
+            ]
+        else:
+            results = self.notifier.deliver(unique, self._redact(event))
+        with storage.transaction() as db:
+            for result in results:
+                db.execute(
+                    """
+                    INSERT INTO reliability_notification_deliveries (
+                        delivery_id, user_id, project_id, incident_id, alert_id,
+                        destination_type, destination_ref, status,
+                        response_code, error, attempt, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+                    """,
+                    (
+                        _id("delivery"),
+                        user_id,
+                        project_id,
+                        incident_id,
+                        alert_id,
+                        result.get("destination_type") or "unknown",
+                        result.get("destination_ref"),
+                        result.get("status") or "failed",
+                        result.get("response_code"),
+                        self._redact(result.get("error"))
+                        if result.get("error")
+                        else None,
+                        storage.now_iso(),
+                    ),
+                )
+        return results
 
     @staticmethod
     def adaptive_sample_rate(observation: dict[str, Any]) -> float:
@@ -833,21 +903,35 @@ class ReliabilityPlatform:
     def recovery_plan(failure_type: str, attempt: int = 1) -> dict[str, Any]:
         normalized = failure_type.strip().lower().replace(" ", "_")
         strategies = {
-            "provider_timeout": ("safe_retry", True),
-            "rate_limit": ("exponential_delay", True),
-            "invalid_arguments": ("repair_arguments", False),
-            "expired_authentication": ("reconnect", False),
-            "wrong_tool": ("replan", False),
-            "stale_state": ("refresh_state", False),
-            "duplicate_action": ("block", False),
-            "partial_side_effect": ("verify_first", False),
-            "irreversible_unknown_state": ("human_review", False),
-            "semantic_failure": ("stronger_verifier", False),
-            "downstream_contamination": ("rollback_checkpoint", False),
-            "policy_violation": ("block", False),
+            "provider_timeout": ("safe_retry", True, 3),
+            "timeout": ("safe_retry", True, 3),
+            "rate_limit": ("exponential_delay", True, 5),
+            "invalid_arguments": ("repair_arguments", False, 1),
+            "bad_json": ("correct_and_regenerate", True, 2),
+            "invalid_json": ("correct_and_regenerate", True, 2),
+            "expired_authentication": ("reconnect", False, 1),
+            "wrong_tool": ("replan", False, 1),
+            "bad_handoff": ("regenerate_handoff", True, 2),
+            "provider_outage": ("fallback_provider", True, 2),
+            "stale_state": ("refresh_state", False, 1),
+            "state_corruption": ("rollback_checkpoint", False, 1),
+            "duplicate_action": ("block", False, 0),
+            "duplicate_payment": ("block", False, 0),
+            "partial_side_effect": ("verify_first", False, 1),
+            "irreversible_unknown_state": ("human_review", False, 0),
+            "semantic_failure": ("stronger_verifier", False, 1),
+            "downstream_contamination": ("rollback_checkpoint", False, 1),
+            "policy_violation": ("block", False, 0),
+            "unknown": ("contain_and_review", False, 0),
         }
-        strategy, retryable = strategies.get(normalized, ("human_review", False))
         bounded_attempt = max(1, attempt)
+        strategy, potentially_retryable, max_attempts = strategies.get(
+            normalized, ("human_review", False, 0)
+        )
+        exhausted = potentially_retryable and bounded_attempt > max_attempts
+        retryable = potentially_retryable and not exhausted
+        if exhausted:
+            strategy = "escalate_human_review"
         return {
             "failure_type": normalized,
             "strategy": strategy,
@@ -857,6 +941,10 @@ class ReliabilityPlatform:
             if strategy == "exponential_delay"
             else 0,
             "requires_idempotency": retryable,
+            "requires_revalidation": strategy not in {"block", "human_review"},
+            "max_attempts": max_attempts,
+            "exhausted": exhausted,
+            "escalation": "human_review" if exhausted else None,
             "decision": "RETRY"
             if retryable
             else "BLOCK"
@@ -1404,14 +1492,24 @@ class ReliabilityPlatform:
         status: str = "pending",
         limit: int = 100,
     ) -> list[dict[str, Any]]:
-        return storage.rows(
-            """
-            SELECT * FROM reliability_annotations
-            WHERE user_id = ? AND COALESCE(project_id, '') = ? AND status = ?
-            ORDER BY created_at LIMIT ?
-            """,
-            (user_id, project_id or "", status, max(1, min(500, limit))),
-        )
+        return [
+            _json_record(
+                item,
+                (
+                    "evidence_bundle_json",
+                    "permissions_json",
+                    "resume_payload_json",
+                ),
+            )
+            for item in storage.rows(
+                """
+                SELECT * FROM reliability_annotations
+                WHERE user_id = ? AND COALESCE(project_id, '') = ? AND status = ?
+                ORDER BY created_at LIMIT ?
+                """,
+                (user_id, project_id or "", status, max(1, min(500, limit))),
+            )
+        ]
 
     def cluster_failure(
         self,
@@ -1818,7 +1916,8 @@ class ReliabilityPlatform:
             """,
             (user_id, project_id or ""),
         )
-        created = []
+        created: list[dict[str, Any]] = []
+        pending_notifications: list[tuple[dict[str, Any], list[Any]]] = []
         with storage.transaction() as db:
             for rule in rules:
                 if rule["signal"] not in signals:
@@ -1826,33 +1925,86 @@ class ReliabilityPlatform:
                 value = float(signals[rule["signal"]])
                 if not _matches(value, rule["operator"], float(rule["threshold"])):
                     continue
-                alert_id = _id("alert")
-                db.execute(
+                now = storage.now_iso()
+                existing = db.execute(
                     """
-                    INSERT INTO reliability_alerts (
-                        alert_id, rule_id, user_id, project_id, signal,
-                        observed_value, severity, status, context_json, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)
+                    SELECT * FROM reliability_alerts
+                    WHERE rule_id = ? AND user_id = ?
+                      AND status IN ('open', 'acknowledged')
+                    ORDER BY created_at DESC LIMIT 1
                     """,
-                    (
-                        alert_id,
-                        rule["rule_id"],
-                        user_id,
-                        project_id,
-                        rule["signal"],
-                        value,
-                        rule["severity"],
-                        storage.dumps(self._redact(context or {})),
-                        storage.now_iso(),
-                    ),
+                    (rule["rule_id"], user_id),
+                ).fetchone()
+                if existing:
+                    alert_id = existing["alert_id"]
+                    repeat_count = int(existing["repeat_count"] or 1) + 1
+                    db.execute(
+                        """
+                        UPDATE reliability_alerts
+                        SET observed_value = ?, severity = ?, context_json = ?,
+                            repeat_count = ?, updated_at = ?
+                        WHERE alert_id = ?
+                        """,
+                        (
+                            value,
+                            rule["severity"],
+                            storage.dumps(self._redact(context or {})),
+                            repeat_count,
+                            now,
+                            alert_id,
+                        ),
+                    )
+                    deduplicated = True
+                else:
+                    alert_id = _id("alert")
+                    repeat_count = 1
+                    db.execute(
+                        """
+                        INSERT INTO reliability_alerts (
+                            alert_id, rule_id, user_id, project_id, signal,
+                            observed_value, severity, status, context_json,
+                            repeat_count, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, 1, ?, ?)
+                        """,
+                        (
+                            alert_id,
+                            rule["rule_id"],
+                            user_id,
+                            project_id,
+                            rule["signal"],
+                            value,
+                            rule["severity"],
+                            storage.dumps(self._redact(context or {})),
+                            now,
+                            now,
+                        ),
+                    )
+                    deduplicated = False
+                created_item = {
+                    "alert_id": alert_id,
+                    "signal": rule["signal"],
+                    "observed_value": value,
+                    "severity": rule["severity"],
+                    "repeat_count": repeat_count,
+                    "deduplicated": deduplicated,
+                }
+                created.append(created_item)
+                pending_notifications.append(
+                    (created_item, storage.loads(rule["destinations_json"], []))
                 )
-                created.append(
-                    {
-                        "alert_id": alert_id,
-                        "signal": rule["signal"],
-                        "severity": rule["severity"],
-                    }
-                )
+        for item, destinations in pending_notifications:
+            item["deliveries"] = self._notify(
+                user_id=user_id,
+                project_id=project_id,
+                destinations=destinations,
+                alert_id=item["alert_id"],
+                event={
+                    "event_type": "reliability_alert",
+                    "summary": f"{item['severity'].upper()}: {item['signal']} threshold breached",
+                    **item,
+                    "context": context or {},
+                },
+            )
         return created
 
     def create_incident_from_cluster(
@@ -1866,17 +2018,28 @@ class ReliabilityPlatform:
             raise ReliabilityPlatformError("Failure cluster was not found.")
         existing = storage.row(
             """SELECT * FROM reliability_incidents
-               WHERE user_id = ? AND root_signal = ? AND status <> 'resolved'""",
-            (user_id, cluster["signature"]),
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+                 AND root_signal = ? AND status <> 'resolved'""",
+            (user_id, cluster["project_id"] or "", cluster["signature"]),
         )
         now = storage.now_iso()
+        created_new = existing is None
+        previous_severity = existing["severity"] if existing else None
+        affected_workflows = int(cluster["workflow_count"])
+        severity = (
+            "critical"
+            if affected_workflows >= 50
+            else "high"
+            if affected_workflows >= 10
+            else "medium"
+        )
         with storage.transaction(immediate=True) as db:
             if existing:
                 incident_id = existing["incident_id"]
                 db.execute(
                     """UPDATE reliability_incidents SET affected_workflows = ?,
-                       last_seen_at = ? WHERE incident_id = ?""",
-                    (cluster["workflow_count"], now, incident_id),
+                       severity = ?, last_seen_at = ? WHERE incident_id = ?""",
+                    (cluster["workflow_count"], severity, now, incident_id),
                 )
             else:
                 incident_id = _id("incident")
@@ -1895,20 +2058,268 @@ class ReliabilityPlatform:
                         f"Repeated {cluster['failure_type']} failures",
                         cluster["signature"],
                         f"{cluster['provider'] or 'unknown provider'} / {cluster['tool_name'] or 'unknown tool'}",
-                        "high" if int(cluster["workflow_count"]) >= 10 else "medium",
+                        severity,
                         cluster["workflow_count"],
                         cluster["first_seen_at"],
                         now,
                         storage.dumps({"cluster_id": cluster_id}),
                     ),
                 )
-        return _json_record(
+            members = db.execute(
+                "SELECT * FROM reliability_failure_members WHERE cluster_id = ?",
+                (cluster_id,),
+            ).fetchall()
+            for member in members:
+                db.execute(
+                    """
+                    INSERT OR IGNORE INTO reliability_incident_members (
+                        member_id, incident_id, workflow_id, failure_id, created_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        _id("imem"),
+                        incident_id,
+                        member["workflow_id"],
+                        member["observation_id"],
+                        now,
+                    ),
+                )
+        incident = _json_record(
             storage.row(
                 "SELECT * FROM reliability_incidents WHERE incident_id = ?",
                 (incident_id,),
             )
             or {},
             ("metadata_json",),
+        )
+        if not incident.get("regression_dataset_id"):
+            promoted = self.promote_cluster_to_dataset(
+                user_id=user_id,
+                cluster_id=cluster_id,
+                name=f"Incident {incident_id}: {cluster['failure_type']}",
+            )
+            incident["regression_dataset_id"] = promoted["dataset"]["dataset_id"]
+            incident["metadata"]["regression_case_count"] = promoted["case_count"]
+            with storage.transaction() as db:
+                db.execute(
+                    """
+                    UPDATE reliability_incidents
+                    SET regression_dataset_id = ?, metadata_json = ?
+                    WHERE incident_id = ?
+                    """,
+                    (
+                        incident["regression_dataset_id"],
+                        storage.dumps(incident["metadata"]),
+                        incident_id,
+                    ),
+                )
+        if created_new or previous_severity != severity:
+            destinations: list[Any] = ["dashboard"]
+            rules = storage.rows(
+                """
+                SELECT destinations_json FROM reliability_alert_rules
+                WHERE user_id = ? AND COALESCE(project_id, '') = ? AND active = 1
+                """,
+                (user_id, cluster["project_id"] or ""),
+            )
+            for rule in rules:
+                destinations.extend(storage.loads(rule["destinations_json"], []))
+            incident["deliveries"] = self._notify(
+                user_id=user_id,
+                project_id=cluster["project_id"],
+                destinations=destinations,
+                incident_id=incident_id,
+                event={
+                    "event_type": "incident_opened"
+                    if created_new
+                    else "incident_escalated",
+                    "summary": f"{severity.upper()} incident: {incident['title']}",
+                    "incident_id": incident_id,
+                    "severity": severity,
+                    "affected_workflows": cluster["workflow_count"],
+                    "likely_cause": incident["likely_cause"],
+                    "response": {
+                        "unsafe_continuation_blocked": True,
+                        "retries_stopped": cluster["failure_type"]
+                        in {"duplicate_action", "duplicate_payment"},
+                        "fallback_evaluated": True,
+                        "regression_dataset_id": incident["regression_dataset_id"],
+                    },
+                },
+            )
+        return incident
+
+    def get_incident(self, *, user_id: str, incident_id: str) -> dict[str, Any]:
+        incident = storage.row(
+            "SELECT * FROM reliability_incidents WHERE incident_id = ? AND user_id = ?",
+            (incident_id, user_id),
+        )
+        if incident is None:
+            raise ReliabilityPlatformError("Incident was not found.")
+        result = _json_record(incident, ("metadata_json",))
+        result["members"] = storage.rows(
+            "SELECT * FROM reliability_incident_members WHERE incident_id = ? ORDER BY created_at",
+            (incident_id,),
+        )
+        result["deliveries"] = storage.rows(
+            """
+            SELECT * FROM reliability_notification_deliveries
+            WHERE incident_id = ? ORDER BY created_at
+            """,
+            (incident_id,),
+        )
+        return result
+
+    def list_incidents(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        clauses = ["user_id = ?", "COALESCE(project_id, '') = ?"]
+        params: list[Any] = [user_id, project_id or ""]
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        params.append(max(1, min(500, limit)))
+        return [
+            _json_record(item, ("metadata_json",))
+            for item in storage.rows(
+                f"""
+                SELECT * FROM reliability_incidents
+                WHERE {" AND ".join(clauses)}
+                ORDER BY last_seen_at DESC LIMIT ?
+                """,
+                tuple(params),
+            )
+        ]
+
+    def transition_incident(
+        self,
+        *,
+        user_id: str,
+        incident_id: str,
+        action: str,
+        actor: str,
+        resolution: str | None = None,
+    ) -> dict[str, Any]:
+        action = action.strip().lower()
+        if action not in {"acknowledge", "investigate", "resolve", "reopen"}:
+            raise ReliabilityPlatformError("Unsupported incident action.")
+        incident = self.get_incident(user_id=user_id, incident_id=incident_id)
+        current = incident["status"]
+        allowed = {
+            "open": {"acknowledge", "investigate", "resolve"},
+            "investigating": {"resolve", "reopen"},
+            "resolved": {"reopen"},
+        }
+        if action not in allowed.get(current, set()):
+            raise ReliabilityPlatformError(
+                f"Cannot {action} an incident in {current} state."
+            )
+        now = storage.now_iso()
+        if action in {"acknowledge", "investigate"}:
+            status = "investigating"
+            values = (status, now, actor, incident_id, user_id)
+            query = """
+                UPDATE reliability_incidents
+                SET status = ?, acknowledged_at = ?, acknowledged_by = ?,
+                    last_seen_at = last_seen_at
+                WHERE incident_id = ? AND user_id = ?
+            """
+        elif action == "resolve":
+            if not resolution:
+                raise ReliabilityPlatformError("A resolution is required.")
+            status = "resolved"
+            values = (status, now, actor, resolution, incident_id, user_id)
+            query = """
+                UPDATE reliability_incidents
+                SET status = ?, resolved_at = ?, resolved_by = ?, resolution = ?
+                WHERE incident_id = ? AND user_id = ?
+            """
+        else:
+            status = "open"
+            values = (status, incident_id, user_id)
+            query = """
+                UPDATE reliability_incidents
+                SET status = ?, resolved_at = NULL, resolved_by = NULL,
+                    resolution = NULL
+                WHERE incident_id = ? AND user_id = ?
+            """
+        with storage.transaction(immediate=True) as db:
+            db.execute(query, values)
+        action_past = {
+            "acknowledge": "acknowledged",
+            "investigate": "investigated",
+            "resolve": "resolved",
+            "reopen": "reopened",
+        }[action]
+        updated = self.get_incident(user_id=user_id, incident_id=incident_id)
+        updated["transition_deliveries"] = self._notify(
+            user_id=user_id,
+            project_id=updated["project_id"],
+            destinations=["dashboard"],
+            incident_id=incident_id,
+            event={
+                "event_type": f"incident_{action}",
+                "summary": f"Incident {incident_id} {action_past} by {actor}",
+                "incident_id": incident_id,
+                "status": status,
+                "resolution": resolution,
+            },
+        )
+        return updated
+
+    def transition_alert(
+        self,
+        *,
+        user_id: str,
+        alert_id: str,
+        action: str,
+        actor: str,
+        resolution: str | None = None,
+    ) -> dict[str, Any]:
+        action = action.strip().lower()
+        alert = storage.row(
+            "SELECT * FROM reliability_alerts WHERE alert_id = ? AND user_id = ?",
+            (alert_id, user_id),
+        )
+        if alert is None:
+            raise ReliabilityPlatformError("Alert was not found.")
+        if action == "acknowledge" and alert["status"] == "open":
+            query = """
+                UPDATE reliability_alerts SET status = 'acknowledged',
+                    acknowledged_at = ?, acknowledged_by = ?, updated_at = ?
+                WHERE alert_id = ? AND user_id = ?
+            """
+            values = (storage.now_iso(), actor, storage.now_iso(), alert_id, user_id)
+        elif action == "resolve" and alert["status"] in {"open", "acknowledged"}:
+            if not resolution:
+                raise ReliabilityPlatformError("A resolution is required.")
+            query = """
+                UPDATE reliability_alerts SET status = 'resolved', resolved_at = ?,
+                    resolution = ?, updated_at = ?
+                WHERE alert_id = ? AND user_id = ?
+            """
+            values = (
+                storage.now_iso(),
+                resolution,
+                storage.now_iso(),
+                alert_id,
+                user_id,
+            )
+        else:
+            raise ReliabilityPlatformError("Invalid alert transition.")
+        with storage.transaction(immediate=True) as db:
+            db.execute(query, values)
+        return _json_record(
+            storage.row(
+                "SELECT * FROM reliability_alerts WHERE alert_id = ?", (alert_id,)
+            )
+            or {},
+            ("context_json",),
         )
 
     def replay_trace(
@@ -2170,6 +2581,1021 @@ class ReliabilityPlatform:
                 (int(link["cancellation_epoch"]) for link in links), default=0
             ),
         }
+
+    @staticmethod
+    def _health_metrics(records: list[dict[str, Any]]) -> dict[str, float]:
+        total = len(records)
+        if not total:
+            return {
+                "failure_rate": 0.0,
+                "retry_rate": 0.0,
+                "timeout_rate": 0.0,
+                "average_latency_ms": 0.0,
+                "p95_latency_ms": 0.0,
+                "average_tokens": 0.0,
+                "evidence_quality": 1.0,
+                "contradiction_rate": 0.0,
+                "average_queue_delay_ms": 0.0,
+                "fallback_rate": 0.0,
+            }
+        latencies = sorted(float(item.get("latency_ms") or 0) for item in records)
+        failures = retries = timeouts = contradictions = fallbacks = 0
+        tokens = evidence = queue_delay = 0.0
+        for item in records:
+            metadata = storage.loads(item.get("metadata_json"), {})
+            status = str(item.get("status") or "").lower()
+            error_type = str(item.get("error_type") or "").lower()
+            failures += int(status in {"error", "failed", "blocked"})
+            retries += int(
+                status in {"retry", "retrying"}
+                or int(metadata.get("retry_count") or 0) > 0
+            )
+            timeouts += int("timeout" in error_type)
+            contradictions += int(
+                "contradiction" in error_type
+                or bool(metadata.get("state_contradiction"))
+            )
+            fallbacks += int(
+                bool(metadata.get("fallback_used"))
+                or str(metadata.get("route") or "").lower() == "fallback"
+            )
+            tokens += float(item.get("token_cost") or 0)
+            evidence += float(item.get("evidence_strength") or 0)
+            queue_delay += float(metadata.get("queue_delay_ms") or 0)
+        p95_index = max(0, math.ceil(len(latencies) * 0.95) - 1)
+        return {
+            "failure_rate": round(failures / total, 6),
+            "retry_rate": round(retries / total, 6),
+            "timeout_rate": round(timeouts / total, 6),
+            "average_latency_ms": round(sum(latencies) / total, 4),
+            "p95_latency_ms": round(latencies[p95_index], 4),
+            "average_tokens": round(tokens / total, 4),
+            "evidence_quality": round(evidence / total, 6),
+            "contradiction_rate": round(contradictions / total, 6),
+            "average_queue_delay_ms": round(queue_delay / total, 4),
+            "fallback_rate": round(fallbacks / total, 6),
+        }
+
+    def predict_health(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        component_type: str = "project",
+        component_name: str = "all",
+        window_minutes: int = 10,
+        preventive_actions: bool = True,
+    ) -> dict[str, Any]:
+        window_minutes = max(5, min(1440, int(window_minutes)))
+        now = datetime.now(timezone.utc)
+        current_start = now - timedelta(minutes=window_minutes)
+        baseline_start = current_start - timedelta(minutes=window_minutes * 6)
+        column = {
+            "provider": "provider",
+            "tool": "tool_name",
+            "model": "model",
+            "agent": "agent_id",
+        }.get(component_type)
+        clauses = ["user_id = ?", "COALESCE(project_id, '') = ?", "created_at >= ?"]
+        params: list[Any] = [user_id, project_id or "", baseline_start.isoformat()]
+        if column and component_name != "all":
+            clauses.append(f"{column} = ?")
+            params.append(component_name)
+        records = storage.rows(
+            f"""
+            SELECT * FROM reliability_observations
+            WHERE {" AND ".join(clauses)} ORDER BY created_at
+            """,
+            tuple(params),
+        )
+        current: list[dict[str, Any]] = []
+        baseline: list[dict[str, Any]] = []
+        for item in records:
+            try:
+                created_at = datetime.fromisoformat(str(item["created_at"]))
+            except ValueError:
+                continue
+            if created_at >= current_start:
+                current.append(item)
+            else:
+                baseline.append(item)
+        signals = self._health_metrics(current)
+        baseline_metrics = self._health_metrics(baseline)
+        if not baseline:
+            baseline_metrics = {
+                **signals,
+                "failure_rate": min(signals["failure_rate"], 0.01),
+                "timeout_rate": min(signals["timeout_rate"], 0.005),
+                "retry_rate": min(signals["retry_rate"], 0.01),
+            }
+        midpoint = len(current) // 2
+        early = self._health_metrics(current[:midpoint])
+        late = self._health_metrics(current[midpoint:])
+        trends = {
+            key: round(late[key] - early[key], 6)
+            for key in (
+                "failure_rate",
+                "retry_rate",
+                "timeout_rate",
+                "average_latency_ms",
+                "average_tokens",
+                "evidence_quality",
+                "average_queue_delay_ms",
+                "fallback_rate",
+            )
+        }
+
+        def increase(metric: str, floor: float = 0.01) -> float:
+            before = max(floor, float(baseline_metrics.get(metric) or 0))
+            return max(0.0, (float(signals.get(metric) or 0) - before) / before)
+
+        anomalies = {
+            "failure_rate_ratio": round(
+                float(signals["failure_rate"])
+                / max(0.001, float(baseline_metrics["failure_rate"])),
+                4,
+            ),
+            "latency_increase": round(increase("average_latency_ms", 1), 4),
+            "timeout_rate_ratio": round(
+                float(signals["timeout_rate"])
+                / max(0.001, float(baseline_metrics["timeout_rate"])),
+                4,
+            ),
+            "token_increase": round(increase("average_tokens", 1), 4),
+            "evidence_decline": round(
+                max(
+                    0.0,
+                    float(baseline_metrics["evidence_quality"])
+                    - float(signals["evidence_quality"]),
+                ),
+                4,
+            ),
+            "queue_delay_increase": round(increase("average_queue_delay_ms", 1), 4),
+        }
+        empirical_failure = (
+            sum(
+                item.get("status") in {"error", "failed", "blocked"} for item in current
+            )
+            + 1
+        ) / (len(current) + 5)
+        score = (
+            empirical_failure * 2.4
+            + signals["retry_rate"] * 0.8
+            + signals["timeout_rate"] * 1.2
+            + min(2.0, anomalies["latency_increase"]) * 0.35
+            + min(2.0, anomalies["token_increase"]) * 0.12
+            + anomalies["evidence_decline"] * 0.8
+            + signals["contradiction_rate"] * 1.4
+            + min(2.0, anomalies["queue_delay_increase"]) * 0.2
+            + signals["fallback_rate"] * 0.4
+            + max(0.0, trends["failure_rate"]) * 1.4
+            + max(0.0, trends["timeout_rate"]) * 0.8
+        )
+        failure_probability = round(_clamp(1 - math.exp(-score)), 4)
+        confidence = round(min(0.99, 0.15 + math.sqrt(len(current)) / 10), 4)
+        health_state = (
+            "critical"
+            if failure_probability >= 0.75
+            else "degraded"
+            if failure_probability >= 0.4
+            else "healthy"
+        )
+        actions: list[str] = []
+        if anomalies["failure_rate_ratio"] >= 3:
+            actions.append("open_circuit")
+        if anomalies["timeout_rate_ratio"] >= 3:
+            actions.extend(["stop_retries", "route_to_fallback"])
+        if anomalies["latency_increase"] >= 0.5:
+            actions.append("reduce_load")
+        if anomalies["evidence_decline"] >= 0.2:
+            actions.append("increase_verification")
+        if health_state != "healthy":
+            actions.append("alert_developer")
+        actions = list(dict.fromkeys(actions))
+        snapshot_id = _id("health")
+        with storage.transaction() as db:
+            db.execute(
+                """
+                INSERT INTO reliability_health_snapshots (
+                    snapshot_id, user_id, project_id, component_type,
+                    component_name, window_minutes, sample_count, signals_json,
+                    baseline_json, anomalies_json, trends_json,
+                    failure_probability, confidence, health_state,
+                    recommended_actions_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    user_id,
+                    project_id,
+                    component_type,
+                    component_name,
+                    window_minutes,
+                    len(current),
+                    storage.dumps(signals),
+                    storage.dumps(baseline_metrics),
+                    storage.dumps(anomalies),
+                    storage.dumps(trends),
+                    failure_probability,
+                    confidence,
+                    health_state,
+                    storage.dumps(actions),
+                    storage.now_iso(),
+                ),
+            )
+        preventative: dict[str, Any] | None = None
+        if (
+            preventive_actions
+            and health_state == "critical"
+            and component_type in {"provider", "tool", "database", "redis", "worker"}
+            and "open_circuit" in actions
+        ):
+            circuit = self.configure_circuit(
+                user_id=user_id,
+                project_id=project_id,
+                dependency_type=component_type,
+                dependency_name=component_name,
+                config={},
+            )
+            probe_after = (
+                now + timedelta(seconds=circuit["cooldown_seconds"])
+            ).isoformat()
+            with storage.transaction() as db:
+                db.execute(
+                    """
+                    UPDATE reliability_circuit_breakers
+                    SET state = 'open', opened_at = ?, probe_after = ?, updated_at = ?
+                    WHERE circuit_id = ?
+                    """,
+                    (
+                        storage.now_iso(),
+                        probe_after,
+                        storage.now_iso(),
+                        circuit["circuit_id"],
+                    ),
+                )
+            preventative = {
+                "circuit_id": circuit["circuit_id"],
+                "action": "opened",
+                "probe_after": probe_after,
+            }
+        result = {
+            "snapshot_id": snapshot_id,
+            "component_type": component_type,
+            "component_name": component_name,
+            "health_state": health_state,
+            "failure_probability": failure_probability,
+            "confidence": confidence,
+            "sample_count": len(current),
+            "signals": signals,
+            "baseline": baseline_metrics,
+            "anomalies": anomalies,
+            "trends": trends,
+            "recommended_actions": actions,
+            "preventative_action": preventative,
+        }
+        if health_state != "healthy":
+            result["alerts"] = self.evaluate_alerts(
+                user_id=user_id,
+                project_id=project_id,
+                signals={
+                    "failure_probability": failure_probability,
+                    **signals,
+                },
+                context={
+                    "snapshot_id": snapshot_id,
+                    "component_type": component_type,
+                    "component_name": component_name,
+                    "health_state": health_state,
+                },
+            )
+        return result
+
+    def health_history(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        return [
+            _json_record(
+                item,
+                (
+                    "signals_json",
+                    "baseline_json",
+                    "anomalies_json",
+                    "trends_json",
+                    "recommended_actions_json",
+                ),
+            )
+            for item in storage.rows(
+                """
+                SELECT * FROM reliability_health_snapshots
+                WHERE user_id = ? AND COALESCE(project_id, '') = ?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (user_id, project_id or "", max(1, min(500, limit))),
+            )
+        ]
+
+    def create_slo(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        name: str,
+        metric: str,
+        operator: str,
+        target: float,
+        window_minutes: int,
+        severity: str,
+    ) -> dict[str, Any]:
+        if operator not in {"lt", "lte", "gt", "gte"}:
+            raise ReliabilityPlatformError("SLO operator must be lt, lte, gt, or gte.")
+        now = storage.now_iso()
+        existing = storage.row(
+            """
+            SELECT * FROM reliability_slos
+            WHERE user_id = ? AND COALESCE(project_id, '') = ? AND name = ?
+            """,
+            (user_id, project_id or "", name),
+        )
+        slo_id = existing["slo_id"] if existing else _id("slo")
+        with storage.transaction() as db:
+            if existing:
+                db.execute(
+                    """
+                    UPDATE reliability_slos SET metric = ?, operator = ?, target = ?,
+                        window_minutes = ?, severity = ?, active = 1, updated_at = ?
+                    WHERE slo_id = ?
+                    """,
+                    (
+                        metric,
+                        operator,
+                        float(target),
+                        max(5, min(43200, int(window_minutes))),
+                        severity,
+                        now,
+                        slo_id,
+                    ),
+                )
+            else:
+                db.execute(
+                    """
+                    INSERT INTO reliability_slos (
+                        slo_id, user_id, project_id, name, metric, operator,
+                        target, window_minutes, severity, active, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+                    """,
+                    (
+                        slo_id,
+                        user_id,
+                        project_id,
+                        name,
+                        metric,
+                        operator,
+                        float(target),
+                        max(5, min(43200, int(window_minutes))),
+                        severity,
+                        now,
+                        now,
+                    ),
+                )
+        return (
+            storage.row("SELECT * FROM reliability_slos WHERE slo_id = ?", (slo_id,))
+            or {}
+        )
+
+    def evaluate_slos(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        metrics: dict[str, float],
+    ) -> dict[str, Any]:
+        slos = storage.rows(
+            """
+            SELECT * FROM reliability_slos
+            WHERE user_id = ? AND COALESCE(project_id, '') = ? AND active = 1
+            ORDER BY severity DESC, name
+            """,
+            (user_id, project_id or ""),
+        )
+        evaluations = []
+        now = datetime.now(timezone.utc)
+        overall = "healthy"
+        for slo in slos:
+            if slo["metric"] not in metrics:
+                continue
+            actual = float(metrics[slo["metric"]])
+            target = float(slo["target"])
+            compliant = _matches(actual, slo["operator"], target)
+            if slo["operator"] in {"lt", "lte"}:
+                burn_rate = actual / max(abs(target), 1e-9)
+                budget = _clamp(1 - burn_rate)
+            else:
+                allowed_bad = max(1e-9, 1 - target)
+                actual_bad = max(0.0, 1 - actual)
+                burn_rate = actual_bad / allowed_bad
+                budget = _clamp(1 - burn_rate)
+            state = (
+                "healthy"
+                if compliant
+                else "critical"
+                if slo["severity"] == "critical" or burn_rate >= 2
+                else "degraded"
+            )
+            if state == "critical":
+                overall = "critical"
+            elif state == "degraded" and overall == "healthy":
+                overall = "degraded"
+            evaluation_id = _id("sloeval")
+            window_start = now - timedelta(minutes=int(slo["window_minutes"]))
+            with storage.transaction() as db:
+                db.execute(
+                    """
+                    INSERT INTO reliability_slo_evaluations (
+                        evaluation_id, slo_id, user_id, project_id, actual,
+                        compliant, error_budget_remaining, burn_rate, health_state,
+                        window_started_at, window_ended_at, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        evaluation_id,
+                        slo["slo_id"],
+                        user_id,
+                        project_id,
+                        actual,
+                        int(compliant),
+                        budget,
+                        burn_rate,
+                        state,
+                        window_start.isoformat(),
+                        now.isoformat(),
+                        storage.now_iso(),
+                    ),
+                )
+            evaluations.append(
+                {
+                    "evaluation_id": evaluation_id,
+                    "slo_id": slo["slo_id"],
+                    "name": slo["name"],
+                    "metric": slo["metric"],
+                    "actual": actual,
+                    "target": target,
+                    "operator": slo["operator"],
+                    "compliant": compliant,
+                    "error_budget_remaining": round(budget, 4),
+                    "burn_rate": round(burn_rate, 4),
+                    "health_state": state,
+                }
+            )
+        return {"health_state": overall, "evaluations": evaluations}
+
+    @staticmethod
+    def _circuit_record(record: dict[str, Any]) -> dict[str, Any]:
+        return _json_record(record, ("fallback_chain_json", "metadata_json"))
+
+    def configure_circuit(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        dependency_type: str,
+        dependency_name: str,
+        config: dict[str, Any],
+    ) -> dict[str, Any]:
+        existing = storage.row(
+            """
+            SELECT * FROM reliability_circuit_breakers
+            WHERE user_id = ? AND COALESCE(project_id, '') = ?
+              AND dependency_type = ? AND dependency_name = ?
+            """,
+            (user_id, project_id or "", dependency_type, dependency_name),
+        )
+        now = storage.now_iso()
+        circuit_id = existing["circuit_id"] if existing else _id("circuit")
+        fallback_chain = config.get("fallback_chain")
+        if fallback_chain is None and existing:
+            fallback_chain = storage.loads(existing["fallback_chain_json"], [])
+        with storage.transaction(immediate=True) as db:
+            if existing:
+                db.execute(
+                    """
+                    UPDATE reliability_circuit_breakers
+                    SET failure_threshold = ?, minimum_calls = ?,
+                        consecutive_failure_limit = ?, cooldown_seconds = ?,
+                        window_seconds = ?, fallback_chain_json = ?,
+                        metadata_json = ?, updated_at = ?
+                    WHERE circuit_id = ?
+                    """,
+                    (
+                        _clamp(
+                            config.get(
+                                "failure_threshold", existing["failure_threshold"]
+                            )
+                        ),
+                        max(
+                            1,
+                            int(config.get("minimum_calls", existing["minimum_calls"])),
+                        ),
+                        max(
+                            1,
+                            int(
+                                config.get(
+                                    "consecutive_failure_limit",
+                                    existing["consecutive_failure_limit"],
+                                )
+                            ),
+                        ),
+                        max(
+                            5,
+                            int(
+                                config.get(
+                                    "cooldown_seconds", existing["cooldown_seconds"]
+                                )
+                            ),
+                        ),
+                        max(
+                            10,
+                            int(
+                                config.get("window_seconds", existing["window_seconds"])
+                            ),
+                        ),
+                        storage.dumps(fallback_chain or []),
+                        storage.dumps(
+                            self._redact(
+                                config.get("metadata")
+                                or storage.loads(existing["metadata_json"], {})
+                            )
+                        ),
+                        now,
+                        circuit_id,
+                    ),
+                )
+            else:
+                db.execute(
+                    """
+                    INSERT INTO reliability_circuit_breakers (
+                        circuit_id, user_id, project_id, dependency_type,
+                        dependency_name, state, failure_threshold, minimum_calls,
+                        consecutive_failure_limit, cooldown_seconds, window_seconds,
+                        fallback_chain_json, metadata_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'closed', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        circuit_id,
+                        user_id,
+                        project_id,
+                        dependency_type,
+                        dependency_name,
+                        _clamp(config.get("failure_threshold", 0.5)),
+                        max(1, int(config.get("minimum_calls", 5))),
+                        max(1, int(config.get("consecutive_failure_limit", 3))),
+                        max(5, int(config.get("cooldown_seconds", 60))),
+                        max(10, int(config.get("window_seconds", 300))),
+                        storage.dumps(fallback_chain or []),
+                        storage.dumps(self._redact(config.get("metadata") or {})),
+                        now,
+                        now,
+                    ),
+                )
+        return self._circuit_record(
+            storage.row(
+                "SELECT * FROM reliability_circuit_breakers WHERE circuit_id = ?",
+                (circuit_id,),
+            )
+            or {}
+        )
+
+    def before_dependency_call(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        dependency_type: str,
+        dependency_name: str,
+        fallback_chain: list[str] | None = None,
+    ) -> dict[str, Any]:
+        circuit = self.configure_circuit(
+            user_id=user_id,
+            project_id=project_id,
+            dependency_type=dependency_type,
+            dependency_name=dependency_name,
+            config={"fallback_chain": fallback_chain}
+            if fallback_chain is not None
+            else {},
+        )
+        now = datetime.now(timezone.utc)
+        if circuit["state"] == "half_open":
+            fallbacks = circuit["fallback_chain"]
+            return {
+                "decision": "FALLBACK" if fallbacks else "BLOCK",
+                "selected_dependency": fallbacks[0] if fallbacks else None,
+                "fallback_chain": fallbacks,
+                "circuit_state": "half_open",
+                "circuit_id": circuit["circuit_id"],
+                "probe_after": circuit.get("probe_after"),
+            }
+        if circuit["state"] == "open":
+            probe_after = circuit.get("probe_after")
+            if probe_after and now >= datetime.fromisoformat(probe_after):
+                with storage.transaction(immediate=True) as db:
+                    claimed = db.execute(
+                        """
+                        UPDATE reliability_circuit_breakers
+                        SET state = 'half_open', updated_at = ?
+                        WHERE circuit_id = ? AND state = 'open'
+                        """,
+                        (storage.now_iso(), circuit["circuit_id"]),
+                    )
+                if claimed.rowcount == 1:
+                    return {
+                        "decision": "PROBE",
+                        "selected_dependency": dependency_name,
+                        "circuit_state": "half_open",
+                        "circuit_id": circuit["circuit_id"],
+                    }
+                # Another worker owns the half-open probe. Keep traffic away
+                # from the dependency until that probe records its result.
+                fallbacks = circuit["fallback_chain"]
+                return {
+                    "decision": "FALLBACK" if fallbacks else "BLOCK",
+                    "selected_dependency": fallbacks[0] if fallbacks else None,
+                    "fallback_chain": fallbacks,
+                    "circuit_state": "half_open",
+                    "circuit_id": circuit["circuit_id"],
+                    "probe_after": probe_after,
+                }
+            fallbacks = circuit["fallback_chain"]
+            return {
+                "decision": "FALLBACK" if fallbacks else "BLOCK",
+                "selected_dependency": fallbacks[0] if fallbacks else None,
+                "fallback_chain": fallbacks,
+                "circuit_state": "open",
+                "circuit_id": circuit["circuit_id"],
+                "probe_after": probe_after,
+            }
+        return {
+            "decision": "ALLOW",
+            "selected_dependency": dependency_name,
+            "fallback_chain": circuit["fallback_chain"],
+            "circuit_state": circuit["state"],
+            "circuit_id": circuit["circuit_id"],
+        }
+
+    def record_dependency_result(
+        self,
+        *,
+        user_id: str,
+        circuit_id: str,
+        success: bool,
+        latency_ms: float = 0,
+        error_type: str | None = None,
+        selected_dependency: str | None = None,
+    ) -> dict[str, Any]:
+        circuit = storage.row(
+            """
+            SELECT * FROM reliability_circuit_breakers
+            WHERE circuit_id = ? AND user_id = ?
+            """,
+            (circuit_id, user_id),
+        )
+        if circuit is None:
+            raise ReliabilityPlatformError("Circuit breaker was not found.")
+        now = datetime.now(timezone.utc)
+        event_id = _id("cevent")
+        consecutive_failures = (
+            0 if success else int(circuit["consecutive_failures"] or 0) + 1
+        )
+        consecutive_successes = (
+            int(circuit["consecutive_successes"] or 0) + 1 if success else 0
+        )
+        with storage.transaction(immediate=True) as db:
+            db.execute(
+                """
+                INSERT INTO reliability_circuit_events (
+                    event_id, circuit_id, success, latency_ms, error_type,
+                    selected_dependency, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    circuit_id,
+                    int(success),
+                    max(0, float(latency_ms)),
+                    error_type,
+                    selected_dependency,
+                    now.isoformat(),
+                ),
+            )
+            cutoff = now - timedelta(seconds=int(circuit["window_seconds"]))
+            window = db.execute(
+                """
+                SELECT COUNT(*) AS calls,
+                       SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failures
+                FROM reliability_circuit_events
+                WHERE circuit_id = ? AND created_at >= ?
+                """,
+                (circuit_id, cutoff.isoformat()),
+            ).fetchone()
+            calls = int(window["calls"] or 0)
+            failures = int(window["failures"] or 0)
+            failure_rate = failures / max(1, calls)
+            state = circuit["state"]
+            opened_at = circuit["opened_at"]
+            probe_after = circuit["probe_after"]
+            if state == "half_open":
+                if success:
+                    state = "closed"
+                    opened_at = probe_after = None
+                else:
+                    state = "open"
+                    opened_at = now.isoformat()
+                    probe_after = (
+                        now + timedelta(seconds=int(circuit["cooldown_seconds"]))
+                    ).isoformat()
+            elif not success and (
+                consecutive_failures >= int(circuit["consecutive_failure_limit"])
+                or (
+                    calls >= int(circuit["minimum_calls"])
+                    and failure_rate >= float(circuit["failure_threshold"])
+                )
+            ):
+                state = "open"
+                opened_at = now.isoformat()
+                probe_after = (
+                    now + timedelta(seconds=int(circuit["cooldown_seconds"]))
+                ).isoformat()
+            db.execute(
+                """
+                UPDATE reliability_circuit_breakers
+                SET state = ?, consecutive_failures = ?, consecutive_successes = ?,
+                    opened_at = ?, probe_after = ?, last_failure_at = ?,
+                    last_success_at = ?, updated_at = ?
+                WHERE circuit_id = ?
+                """,
+                (
+                    state,
+                    consecutive_failures,
+                    consecutive_successes,
+                    opened_at,
+                    probe_after,
+                    now.isoformat() if not success else circuit["last_failure_at"],
+                    now.isoformat() if success else circuit["last_success_at"],
+                    storage.now_iso(),
+                    circuit_id,
+                ),
+            )
+        updated = self._circuit_record(
+            storage.row(
+                "SELECT * FROM reliability_circuit_breakers WHERE circuit_id = ?",
+                (circuit_id,),
+            )
+            or {}
+        )
+        updated["window_calls"] = calls
+        updated["window_failures"] = failures
+        updated["failure_rate"] = round(failure_rate, 4)
+        return updated
+
+    def list_circuits(
+        self, *, user_id: str, project_id: str | None
+    ) -> list[dict[str, Any]]:
+        return [
+            self._circuit_record(item)
+            for item in storage.rows(
+                """
+                SELECT * FROM reliability_circuit_breakers
+                WHERE user_id = ? AND COALESCE(project_id, '') = ?
+                ORDER BY state DESC, dependency_type, dependency_name
+                """,
+                (user_id, project_id or ""),
+            )
+        ]
+
+    def verify_recovery(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        workflow_id: str,
+        failure_type: str,
+        attempt: int,
+        before_state: dict[str, Any],
+        after_state: dict[str, Any],
+        independent_evidence: dict[str, Any],
+        expected_state: dict[str, Any],
+        strategy: str | None = None,
+    ) -> dict[str, Any]:
+        plan = self.recovery_plan(failure_type, attempt)
+        selected_strategy = strategy or plan["strategy"]
+        checks = []
+        for path, expected in expected_state.items():
+            actual = _get_path(after_state, path)
+            checks.append(
+                {
+                    "name": f"state:{path}",
+                    "passed": actual == expected,
+                    "expected": expected,
+                    "actual": actual,
+                }
+            )
+        evidence_passed = bool(independent_evidence) and bool(
+            independent_evidence.get("verified")
+            or independent_evidence.get("ok")
+            or independent_evidence.get("status")
+            in {"verified", "confirmed", "success"}
+        )
+        checks.append(
+            {
+                "name": "independent_evidence",
+                "passed": evidence_passed,
+            }
+        )
+        checks.append(
+            {
+                "name": "state_changed",
+                "passed": _hash(before_state) != _hash(after_state),
+            }
+        )
+        checks.append(
+            {
+                "name": "trusted_state",
+                "passed": not bool(after_state.get("tainted")),
+            }
+        )
+        verified = bool(checks) and all(check["passed"] for check in checks)
+        decision = (
+            "ALLOW"
+            if verified
+            else "BLOCK"
+            if selected_strategy == "block"
+            else "REVIEW"
+        )
+        recovery_id = _id("recovery")
+        with storage.transaction() as db:
+            db.execute(
+                """
+                INSERT INTO reliability_recovery_attempts (
+                    recovery_id, user_id, project_id, workflow_id,
+                    failure_type, strategy, attempt, before_state_json,
+                    after_state_json, independent_evidence_json, checks_json,
+                    verified, decision, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    recovery_id,
+                    user_id,
+                    project_id,
+                    workflow_id,
+                    failure_type,
+                    selected_strategy,
+                    max(1, int(attempt)),
+                    storage.dumps(self._redact(before_state)),
+                    storage.dumps(self._redact(after_state)),
+                    storage.dumps(self._redact(independent_evidence)),
+                    storage.dumps(checks),
+                    int(verified),
+                    decision,
+                    storage.now_iso(),
+                ),
+            )
+        return {
+            "recovery_id": recovery_id,
+            "failure_type": failure_type,
+            "strategy": selected_strategy,
+            "verified": verified,
+            "decision": decision,
+            "checks": checks,
+        }
+
+    def enqueue_human_review(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        workflow_id: str,
+        reason: str,
+        evidence_bundle: dict[str, Any],
+        permissions: list[str],
+        recommended_action: str,
+        observation_id: str | None = None,
+        decision_id: str | None = None,
+    ) -> dict[str, Any]:
+        annotation = self.enqueue_annotation(
+            user_id=user_id,
+            project_id=project_id,
+            reason=reason,
+            workflow_id=workflow_id,
+            observation_id=observation_id,
+            decision_id=decision_id,
+        )
+        allowed = sorted(
+            {
+                action
+                for action in permissions
+                if action
+                in {
+                    "confirm_state",
+                    "approve_compensation",
+                    "resume",
+                    "terminate",
+                }
+            }
+        )
+        if not allowed:
+            raise ReliabilityPlatformError("Review permissions are required.")
+        with storage.transaction() as db:
+            db.execute(
+                """
+                UPDATE reliability_annotations
+                SET evidence_bundle_json = ?, permissions_json = ?,
+                    recommended_action = ? WHERE annotation_id = ?
+                """,
+                (
+                    storage.dumps(self._redact(evidence_bundle)),
+                    storage.dumps(allowed),
+                    recommended_action,
+                    annotation["annotation_id"],
+                ),
+            )
+        return self.get_human_review(
+            user_id=user_id, review_id=annotation["annotation_id"]
+        )
+
+    def get_human_review(self, *, user_id: str, review_id: str) -> dict[str, Any]:
+        record = storage.row(
+            """
+            SELECT * FROM reliability_annotations
+            WHERE annotation_id = ? AND user_id = ?
+            """,
+            (review_id, user_id),
+        )
+        if record is None:
+            raise ReliabilityPlatformError("Human review was not found.")
+        return _json_record(
+            record,
+            ("evidence_bundle_json", "permissions_json", "resume_payload_json"),
+        )
+
+    def decide_human_review(
+        self,
+        *,
+        user_id: str,
+        review_id: str,
+        reviewer: str,
+        action: str,
+        notes: str | None = None,
+        resume_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        review = self.get_human_review(user_id=user_id, review_id=review_id)
+        if review["status"] != "pending":
+            raise ReliabilityPlatformError("Review has already been decided.")
+        if action not in review["permissions"]:
+            raise ReliabilityPlatformError(
+                "Reviewer is not permitted to take this action."
+            )
+        # Keep the durable queue state compatible with the original annotation
+        # state machine.  The exact terminal decision lives in action_taken and
+        # is returned as a workflow directive below.
+        status = "completed"
+        now = storage.now_iso()
+        with storage.transaction(immediate=True) as db:
+            cursor = db.execute(
+                """
+                UPDATE reliability_annotations
+                SET status = ?, assigned_to = ?, assigned_at = ?, action_taken = ?,
+                    notes = ?, resume_payload_json = ?, decided_at = ?, completed_at = ?
+                WHERE annotation_id = ? AND user_id = ? AND status = 'pending'
+                """,
+                (
+                    status,
+                    reviewer,
+                    now,
+                    action,
+                    notes,
+                    storage.dumps(self._redact(resume_payload or {})),
+                    now,
+                    now,
+                    review_id,
+                    user_id,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ReliabilityPlatformError(
+                    "Review was decided by another reviewer."
+                )
+        updated = self.get_human_review(user_id=user_id, review_id=review_id)
+        updated["workflow_directive"] = {
+            "action": action,
+            "can_continue": action in {"resume", "confirm_state"},
+            "compensation_approved": action == "approve_compensation",
+            "terminate": action == "terminate",
+            "payload": updated["resume_payload"],
+        }
+        return updated
 
     def run_protected_benchmark(
         self,
@@ -2494,6 +3920,12 @@ class ReliabilityPlatform:
         if confirmation != "DELETE":
             raise ReliabilityPlatformError("Deletion confirmation must equal DELETE.")
         direct_tables = (
+            "reliability_notification_deliveries",
+            "reliability_slo_evaluations",
+            "reliability_health_snapshots",
+            "reliability_recovery_attempts",
+            "reliability_circuit_breakers",
+            "reliability_slos",
             "reliability_observations",
             "reliability_tool_contracts",
             "reliability_evidence",
@@ -2617,6 +4049,10 @@ class ReliabilityPlatform:
         deleted: dict[str, int] = {}
         with storage.transaction(immediate=True) as db:
             for table, timestamp in (
+                ("reliability_notification_deliveries", "created_at"),
+                ("reliability_slo_evaluations", "created_at"),
+                ("reliability_health_snapshots", "created_at"),
+                ("reliability_recovery_attempts", "created_at"),
                 ("reliability_observations", "created_at"),
                 ("reliability_alerts", "created_at"),
                 ("reliability_replay_runs", "created_at"),
@@ -2628,6 +4064,15 @@ class ReliabilityPlatform:
                     (user_id, project_id or "", cutoff),
                 )
                 deleted[table] = cursor.rowcount
+            cursor = db.execute(
+                """DELETE FROM reliability_circuit_events
+                   WHERE created_at < ? AND circuit_id IN (
+                       SELECT circuit_id FROM reliability_circuit_breakers
+                       WHERE user_id = ? AND COALESCE(project_id, '') = ?
+                   )""",
+                (cutoff, user_id, project_id or ""),
+            )
+            deleted["reliability_circuit_events"] = cursor.rowcount
         return {"retention_days": days, "cutoff": cutoff, "deleted": deleted}
 
     def audit_export(self, *, user_id: str, project_id: str | None) -> dict[str, Any]:
@@ -2646,6 +4091,42 @@ class ReliabilityPlatform:
                ORDER BY last_seen_at DESC LIMIT 1000""",
             (user_id, project_id or ""),
         )
+        health = storage.rows(
+            """SELECT * FROM reliability_health_snapshots
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+               ORDER BY created_at DESC LIMIT 1000""",
+            (user_id, project_id or ""),
+        )
+        slo_evaluations = storage.rows(
+            """SELECT * FROM reliability_slo_evaluations
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+               ORDER BY created_at DESC LIMIT 1000""",
+            (user_id, project_id or ""),
+        )
+        circuits = storage.rows(
+            """SELECT * FROM reliability_circuit_breakers
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+               ORDER BY updated_at DESC LIMIT 1000""",
+            (user_id, project_id or ""),
+        )
+        recoveries = storage.rows(
+            """SELECT * FROM reliability_recovery_attempts
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+               ORDER BY created_at DESC LIMIT 1000""",
+            (user_id, project_id or ""),
+        )
+        reviews = storage.rows(
+            """SELECT * FROM reliability_annotations
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+               ORDER BY created_at DESC LIMIT 1000""",
+            (user_id, project_id or ""),
+        )
+        deliveries = storage.rows(
+            """SELECT * FROM reliability_notification_deliveries
+               WHERE user_id = ? AND COALESCE(project_id, '') = ?
+               ORDER BY created_at DESC LIMIT 1000""",
+            (user_id, project_id or ""),
+        )
         export = {
             "exported_at": storage.now_iso(),
             "user_id": user_id,
@@ -2656,6 +4137,48 @@ class ReliabilityPlatform:
                 for item in decisions
             ],
             "incidents": [_json_record(item, ("metadata_json",)) for item in incidents],
+            "health_snapshots": [
+                _json_record(
+                    item,
+                    (
+                        "signals_json",
+                        "baseline_json",
+                        "anomalies_json",
+                        "trends_json",
+                        "recommended_actions_json",
+                    ),
+                )
+                for item in health
+            ],
+            "slo_evaluations": slo_evaluations,
+            "circuits": [
+                _json_record(item, ("fallback_chain_json", "metadata_json"))
+                for item in circuits
+            ],
+            "recovery_attempts": [
+                _json_record(
+                    item,
+                    (
+                        "before_state_json",
+                        "after_state_json",
+                        "independent_evidence_json",
+                        "checks_json",
+                    ),
+                )
+                for item in recoveries
+            ],
+            "human_reviews": [
+                _json_record(
+                    item,
+                    (
+                        "evidence_bundle_json",
+                        "permissions_json",
+                        "resume_payload_json",
+                    ),
+                )
+                for item in reviews
+            ],
+            "notification_deliveries": deliveries,
         }
         export["sha256"] = _hash(export)
         return export
