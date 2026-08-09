@@ -38,6 +38,8 @@ services:
         value: auto
       - key: SOFTWARE_EXECUTION_CONTROL_SUPABASE_READY
         value: "false"
+      - key: SOFTWARE_OUTBOX_WORKER_ENABLED
+        value: "true"
       - key: CLARITY_PROJECT_ID
         value: xc0zbrjy3z
       - key: QDRANT_URL

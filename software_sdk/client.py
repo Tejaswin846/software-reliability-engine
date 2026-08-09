@@ -116,3 +116,13 @@ class SoftwareClient:
 
     def status(self) -> Dict[str, Any]:
         return self.get("/api/sdk/status")
+
+    def ingest_observation(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.post("/api/sdk/v2/observations", payload)
+
+    def ingest_otel(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        return self.post("/api/sdk/v2/telemetry/otel", payload)
+
+    def ingest_framework(self, framework: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        safe_framework = framework.strip().lower().replace("_", "-")
+        return self.post(f"/api/sdk/v2/adapters/{safe_framework}", payload)

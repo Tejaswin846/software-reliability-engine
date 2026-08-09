@@ -417,6 +417,7 @@ class AIExecutionService:
         redact: Callable[[str], str],
         scrub: Callable[[Any], Any],
         control_plane: Any | None = None,
+        reliability_platform: Any | None = None,
     ):
         self.get_integrations = get_integrations
         self.get_tool_context = get_tool_context
@@ -430,6 +431,7 @@ class AIExecutionService:
         self.redact = redact
         self.scrub = scrub
         self.control_plane = control_plane or create_execution_control_plane()
+        self.reliability_platform = reliability_platform
         self.worker_id = (
             os.getenv("RENDER_INSTANCE_ID")
             or os.getenv("HOSTNAME")
@@ -443,6 +445,51 @@ class AIExecutionService:
 
     def _safe(self, value: Any) -> Any:
         return self.scrub(value)
+
+    def _platform_project_id(self, state: dict[str, Any]) -> str | None:
+        value = (state.get("metadata") or {}).get("project_id")
+        return _normalized_text(value) or None
+
+    def _platform_observe(
+        self,
+        state: dict[str, Any],
+        *,
+        observation_type: str,
+        status: str,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        """Record normalized lifecycle evidence without weakening the control path."""
+        if self.reliability_platform is None:
+            return
+        try:
+            self.reliability_platform.ingest_observation(
+                user_id=state["user_id"],
+                project_id=self._platform_project_id(state),
+                source="ai-execution-service",
+                framework="matrixs",
+                force_sample=status not in {"ok", "completed", "passed"},
+                observation={
+                    "observation_type": observation_type,
+                    "status": status,
+                    "workflow_id": self._control_workflow_id(state),
+                    "trace_id": state["request_id"],
+                    "span_id": f"{state['request_id']}:{observation_type}",
+                    "risk_score": {
+                        "low_risk": 0.15,
+                        "medium_risk": 0.5,
+                        "high_risk": 0.85,
+                    }.get(state.get("risk_level"), 0.5),
+                    "attributes": self._safe(payload or {}),
+                },
+            )
+        except Exception as error:  # noqa: BLE001 - observability is isolated
+            self.capture_error(
+                error,
+                category="reliability_observation_failure",
+                user_id=state.get("user_id"),
+                request_id=state.get("request_id"),
+                operation=observation_type,
+            )
 
     def _persist(self, state: dict[str, Any]) -> None:
         state["updated_at"] = _now_iso()
@@ -520,6 +567,43 @@ class AIExecutionService:
                 }
             ),
         }
+        if self.reliability_platform is not None:
+            risk_score = {
+                "low_risk": 0.15,
+                "medium_risk": 0.5,
+                "high_risk": 0.85,
+            }.get(plan["risk_level"], 0.5)
+            try:
+                self.reliability_platform.admit(
+                    user_id=user_id,
+                    project_id=self._platform_project_id(state),
+                    risk_score=risk_score,
+                    tokens=max(1, round(len(request_text) / 4)),
+                )
+                self.reliability_platform.upsert_goal(
+                    user_id=user_id,
+                    project_id=self._platform_project_id(state),
+                    workflow_id=self._control_workflow_id(state),
+                    original_goal=request_text,
+                    state={
+                        "current_plan": plan,
+                        "budget": (metadata or {}).get("budget") or {},
+                        "cumulative_risk": risk_score,
+                    },
+                )
+            except Exception as error:  # noqa: BLE001 - admission boundary
+                self.capture_error(
+                    error,
+                    category="reliability_admission_failure",
+                    user_id=user_id,
+                    request_id=request_id,
+                    operation="plan",
+                )
+                return {
+                    "ok": False,
+                    "status": "backpressure",
+                    "error": "Reliability admission control rejected this request.",
+                }
         self._persist(state)
         self.control_plane.start(
             user_id=user_id,
@@ -554,6 +638,12 @@ class AIExecutionService:
             {"risk_level": plan["risk_level"]},
         )
         self._audit(state, "planning", "completed", {"plan": plan})
+        self._platform_observe(
+            state,
+            observation_type="planning",
+            status="completed",
+            payload={"intent": plan["intent"]},
+        )
         return {
             "ok": True,
             "request_id": request_id,
@@ -950,6 +1040,14 @@ class AIExecutionService:
                 integrations=integrations,
                 tool_context=tool_context,
             )
+            taint_state = (
+                self.reliability_platform.workflow_taint_state(
+                    user_id=user_id,
+                    workflow_id=self._control_workflow_id(state),
+                )
+                if self.reliability_platform is not None
+                else {"tainted": False}
+            )
         except Exception as error:  # noqa: BLE001 - provider boundary is fail-closed
             self.capture_error(
                 error,
@@ -970,6 +1068,13 @@ class AIExecutionService:
         verification["risk_adaptive"] = risk_adaptive
         state["verification_result"] = verification
         engine_decision = risk_adaptive["decision"]
+        if taint_state.get("tainted"):
+            engine_decision = "REVIEW"
+            risk_adaptive["decision"] = "REVIEW"
+            risk_adaptive["reason"] = (
+                "Trusted-state enforcement detected contaminated upstream evidence."
+            )
+            risk_adaptive["taint_state"] = taint_state
         passed = bool(
             validation["passed"]
             and verification["passed"]
@@ -1032,6 +1137,15 @@ class AIExecutionService:
             "validation",
             "passed" if validation["passed"] else "failed",
             {"validation_result": validation},
+        )
+        self._platform_observe(
+            state,
+            observation_type="verification",
+            status="passed" if passed else "failed",
+            payload={
+                "decision": control_decision,
+                "tainted": bool(taint_state.get("tainted")),
+            },
         )
         self._audit(
             state,
@@ -1352,6 +1466,35 @@ class AIExecutionService:
                 "error": "Request is not ready for execution.",
             }
 
+        if self.reliability_platform is not None:
+            try:
+                taint_state = self.reliability_platform.workflow_taint_state(
+                    user_id=user_id,
+                    workflow_id=self._control_workflow_id(state),
+                )
+            except Exception as error:  # noqa: BLE001 - fail closed before side effects
+                self.capture_error(
+                    error,
+                    category="reliability_taint_check_failure",
+                    user_id=user_id,
+                    request_id=request_id,
+                    operation="execute",
+                )
+                return {
+                    "ok": False,
+                    "blocked": True,
+                    "status": "control_plane_unavailable",
+                    "error": "Trusted-state verification is unavailable.",
+                }
+            if taint_state.get("tainted"):
+                return {
+                    "ok": False,
+                    "blocked": True,
+                    "status": "review_required",
+                    "error": "Execution depends on contaminated evidence.",
+                    "taint_state": taint_state,
+                }
+
         workflow_id = self._control_workflow_id(state)
         idempotency_key = f"ai-execution:{user_id}:{request_id}"
         try:
@@ -1408,6 +1551,12 @@ class AIExecutionService:
             }
 
         self._audit(state, "execution", "started", {"intent": state["intent"]})
+        self._platform_observe(
+            state,
+            observation_type="tool_execution",
+            status="started",
+            payload={"intent": state["intent"]},
+        )
         try:
             result = self._execute_action(state)
         except Exception as error:  # noqa: BLE001 - tool adapters may raise any provider error
@@ -1510,6 +1659,60 @@ class AIExecutionService:
             "completed" if success else "failed",
             {"execution_result": result},
         )
+        self._platform_observe(
+            state,
+            observation_type="execution_result",
+            status="completed" if success else "failed",
+            payload={
+                "provider": provider,
+                "provider_action_id": provider_action_id,
+                "decision": post_verification.get("decision"),
+            },
+        )
+        if success and self.reliability_platform is not None:
+            try:
+                evidence = self.reliability_platform.record_evidence(
+                    user_id=user_id,
+                    project_id=self._platform_project_id(state),
+                    workflow_id=workflow_id,
+                    evidence={
+                        "evidence_type": "tool_receipt",
+                        "producer_type": "tool",
+                        "producer_id": provider,
+                        "verification_status": "verified",
+                        "trust_level": "trusted",
+                        "payload": {
+                            "receipt_id": result.get("action_receipt_id"),
+                            "provider_action_id": provider_action_id,
+                        },
+                    },
+                )
+                self.reliability_platform.create_checkpoint(
+                    user_id=user_id,
+                    project_id=self._platform_project_id(state),
+                    workflow_id=workflow_id,
+                    checkpoint={
+                        "state": {"status": state["status"], "intent": state["intent"]},
+                        "completed_steps": [request_id],
+                        "verified_evidence_ids": [evidence["evidence_id"]],
+                        "external_side_effects": [
+                            {
+                                "provider": provider,
+                                "provider_action_id": provider_action_id,
+                                "receipt_id": result.get("action_receipt_id"),
+                            }
+                        ],
+                        "verified": True,
+                    },
+                )
+            except Exception as error:  # noqa: BLE001 - receipt already durable
+                self.capture_error(
+                    error,
+                    category="reliability_checkpoint_failure",
+                    user_id=user_id,
+                    request_id=request_id,
+                    operation="checkpoint",
+                )
         if not success:
             self.capture_error(
                 result.get("error") or "AI execution failed.",

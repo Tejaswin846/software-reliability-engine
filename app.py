@@ -11,6 +11,7 @@ import hashlib
 import hmac
 import random
 import secrets
+from contextlib import asynccontextmanager
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from datetime import timedelta
@@ -160,15 +161,28 @@ except ImportError:
     )
 
 try:
-    from .ai_execution import AIExecutionService, create_ai_execution_router
+    from .ai_execution import (
+        AIExecutionService,
+        DurableOutboxWorker,
+        create_ai_execution_router,
+    )
 except ImportError:
-    from ai_execution import AIExecutionService, create_ai_execution_router
+    from ai_execution import (
+        AIExecutionService,
+        DurableOutboxWorker,
+        create_ai_execution_router,
+    )
+
+try:
+    from .reliability_platform import ReliabilityPlatform, create_reliability_platform_router
+except ImportError:
+    from reliability_platform import ReliabilityPlatform, create_reliability_platform_router
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("SOFTWARE_APP_NAME", "Software Reliability Engine")
-APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.2.0")
+APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.3.0")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -5456,12 +5470,55 @@ def record_resumed_integration_action(
         )
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    monitoring = initialize_sentry()
+    if monitoring["configured"] and not monitoring["initialized"]:
+        LOGGER.error(
+            "Sentry is configured but failed to initialize: %s", monitoring["error"]
+        )
+    initialize_redis()
+    initialize_composio()
+    run_startup_checks()
+    worker = None
+    worker_thread = None
+    if os.getenv("SOFTWARE_OUTBOX_WORKER_ENABLED", "true").lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    } and not os.getenv("PYTEST_CURRENT_TEST"):
+        worker = DurableOutboxWorker(
+            handlers={
+                "execution.state_changed": lambda payload: LOGGER.info(
+                    "Execution state changed: %s",
+                    scrub_sensitive_data(payload),
+                )
+            },
+            control_plane=AI_EXECUTION_SERVICE.control_plane,
+        )
+        worker_thread = threading.Thread(
+            target=worker.run_forever,
+            name="durable-outbox-worker",
+            daemon=True,
+        )
+        worker_thread.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            worker.stop()
+        if worker_thread is not None:
+            worker_thread.join(timeout=15)
+
+
 app = FastAPI(
     title=APP_NAME,
     version=APP_VERSION,
     root_path=ROOT_PATH,
     docs_url=None if ENVIRONMENT == "production" else "/docs",
     redoc_url=None if ENVIRONMENT == "production" else "/redoc",
+    lifespan=lifespan,
 )
 
 if ALLOWED_ORIGINS:
@@ -5483,6 +5540,8 @@ app.include_router(
     )
 )
 
+RELIABILITY_PLATFORM = ReliabilityPlatform(scrub=scrub_sensitive_data)
+
 AI_EXECUTION_SERVICE = AIExecutionService(
     get_integrations=list_composio_integrations,
     get_tool_context=get_composio_tool_context,
@@ -5495,6 +5554,7 @@ AI_EXECUTION_SERVICE = AIExecutionService(
     capture_error=capture_operational_error,
     redact=redact_text,
     scrub=scrub_sensitive_data,
+    reliability_platform=RELIABILITY_PLATFORM,
 )
 
 app.include_router(
@@ -5502,6 +5562,14 @@ app.include_router(
         service=AI_EXECUTION_SERVICE,
         current_user=current_user,
         distributed_lock=redis_distributed_lock,
+    )
+)
+
+app.include_router(
+    create_reliability_platform_router(
+        platform=RELIABILITY_PLATFORM,
+        current_user=current_user,
+        require_sdk_api_key=require_sdk_api_key,
     )
 )
 
@@ -5613,16 +5681,6 @@ async def inject_clarity_loader(request: Request, call_next):
         headers=headers,
         media_type="text/html",
     )
-
-
-@app.on_event("startup")
-def startup() -> None:
-    monitoring = initialize_sentry()
-    if monitoring["configured"] and not monitoring["initialized"]:
-        LOGGER.error("Sentry is configured but failed to initialize: %s", monitoring["error"])
-    initialize_redis()
-    initialize_composio()
-    run_startup_checks()
 
 
 @app.get("/health")

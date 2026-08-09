@@ -1,0 +1,32 @@
+name: Reliability gate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pytest ruff
+      - name: Compile backend
+        run: python -m compileall -q app.py ai_execution reliability_platform software_sdk
+      - name: Check changed backend modules
+        run: ruff check reliability_platform ai_execution/worker.py --select E4,E7,E9,F,I,UP,RUF,SIM --ignore N999
+      - name: Run backend regression suite
+        run: pytest -q
+      - name: Check JavaScript SDK syntax
+        run: node --check software_sdk_js/index.js

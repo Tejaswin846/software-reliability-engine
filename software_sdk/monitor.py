@@ -128,6 +128,46 @@ class ReliabilityMonitor:
             },
         )
 
+    def observe(
+        self,
+        observation: Dict[str, Any],
+        *,
+        framework: Optional[str] = None,
+        redaction_actions: Optional[Dict[str, str]] = None,
+        force_sample: bool = False,
+    ) -> Dict[str, Any]:
+        return self.client.ingest_observation(
+            {
+                "observation": observation,
+                "source": "matrixs-python-sdk",
+                "framework": framework,
+                "redaction_actions": redaction_actions or {},
+                "force_sample": force_sample,
+            }
+        )
+
+    def ingest_otel(
+        self,
+        payload: Dict[str, Any],
+        *,
+        redaction_actions: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        return self.client.ingest_otel(
+            {"payload": payload, "redaction_actions": redaction_actions or {}}
+        )
+
+    def ingest_framework_event(
+        self,
+        framework: str,
+        event: Dict[str, Any],
+        *,
+        redaction_actions: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, Any]:
+        return self.client.ingest_framework(
+            framework,
+            {"payload": event, "redaction_actions": redaction_actions or {}},
+        )
+
     def complete_workflow(
         self,
         workflow_id: str,

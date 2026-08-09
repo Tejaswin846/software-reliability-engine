@@ -1,0 +1,17 @@
+{
+  "name": "@matrixs/reliability",
+  "version": "0.3.0",
+  "description": "Observations-first Matrixs reliability SDK for JavaScript and TypeScript agents.",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js"
+    }
+  },
+  "files": ["index.js", "index.d.ts", "README.md"],
+  "engines": { "node": ">=18" },
+  "license": "MIT"
+}
