@@ -22,7 +22,7 @@ Copy `production.env.example` to your cloud provider or local `.env` equivalent 
 ```text
 SOFTWARE_ENV=production
 SOFTWARE_APP_NAME=Software Reliability Engine
-SOFTWARE_VERSION=0.2.0
+SOFTWARE_VERSION=0.4.1
 SOFTWARE_ALLOWED_ORIGINS=
 SOFTWARE_PUBLIC_URL=https://software.yourdomain.com
 SOFTWARE_PRIMARY_HOST=software.yourdomain.com

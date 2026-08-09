@@ -35,6 +35,7 @@ from .models import (
     HumanReviewDecisionRequest,
     HumanReviewRequest,
     IncidentTransitionRequest,
+    NotificationTestRequest,
     ObservationRequest,
     PolicyEvaluateRequest,
     PolicyRequest,
@@ -136,11 +137,15 @@ def create_reliability_platform_router(
                 "incidents": True,
                 "incident_lifecycle": True,
                 "notification_delivery": True,
+                "notification_diagnostics": True,
                 "predictive_health": True,
                 "failure_forecasting": True,
                 "slos": True,
                 "circuit_breakers": True,
                 "provider_failover": True,
+                "database_endpoint_circuits": True,
+                "database_read_failover": True,
+                "idempotent_write_rerouting": True,
                 "verified_recovery": True,
                 "human_review_queue": True,
                 "incident_regression_automation": True,
@@ -156,6 +161,37 @@ def create_reliability_platform_router(
                 "tenant_data_deletion": True,
                 "tenant_controls": True,
             },
+        }
+
+    @router.get("/api/reliability/notifications/status")
+    def notification_status(user: dict[str, Any] = Depends(current_user)):
+        return {
+            "ok": True,
+            "user_id": user["id"],
+            "notifications": platform.notification_status(),
+        }
+
+    @router.post("/api/reliability/notifications/test")
+    def test_notification(
+        payload: NotificationTestRequest,
+        user: dict[str, Any] = Depends(current_user),
+    ):
+        _run(
+            lambda: platform.admit(
+                user_id=user["id"],
+                project_id=payload.project_id,
+                risk_score=0.1,
+            )
+        )
+        return {
+            "ok": True,
+            "deliveries": _run(
+                lambda: platform.send_test_notification(
+                    user_id=user["id"],
+                    project_id=payload.project_id,
+                    destinations=payload.destinations,
+                )
+            ),
         }
 
     @router.post("/api/reliability/health/predict")

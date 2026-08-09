@@ -248,6 +248,45 @@ class ReliabilityPlatform:
                 )
         return results
 
+    def notification_status(self) -> dict[str, Any]:
+        if self.notifier is None or not hasattr(self.notifier, "configuration_status"):
+            return {
+                "destinations": {},
+                "external_delivery_ready": False,
+                "webhook_signing_configured": False,
+                "custom_webhooks_enabled": False,
+            }
+        return self.notifier.configuration_status()
+
+    def send_test_notification(
+        self,
+        *,
+        user_id: str,
+        project_id: str | None,
+        destinations: list[str],
+    ) -> list[dict[str, Any]]:
+        allowed = [
+            item
+            for item in dict.fromkeys(destinations)
+            if item in {"dashboard", "slack", "email", "webhook"}
+        ]
+        if not allowed:
+            raise ReliabilityPlatformError(
+                "At least one supported notification destination is required."
+            )
+        return self._notify(
+            user_id=user_id,
+            project_id=project_id,
+            destinations=allowed,
+            event={
+                "event_type": "notification_test",
+                "summary": "Matrixs reliability notification test",
+                "project_id": project_id,
+                "requested_by": user_id,
+                "created_at": storage.now_iso(),
+            },
+        )
+
     @staticmethod
     def adaptive_sample_rate(observation: dict[str, Any]) -> float:
         status = str(observation.get("status") or "").lower()

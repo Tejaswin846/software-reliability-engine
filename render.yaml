@@ -34,6 +34,18 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_ROLE_KEY
         sync: false
+      - key: SUPABASE_LOAD_BALANCER_URL
+        sync: false
+      - key: SUPABASE_READ_REPLICA_URL
+        sync: false
+      - key: SUPABASE_READ_REPLICA_KEY
+        sync: false
+      - key: SOFTWARE_SUPABASE_TIMEOUT_SECONDS
+        value: "5"
+      - key: SOFTWARE_SUPABASE_CIRCUIT_FAILURES
+        value: "2"
+      - key: SOFTWARE_SUPABASE_CIRCUIT_COOLDOWN_SECONDS
+        value: "30"
       - key: SOFTWARE_EXECUTION_CONTROL_BACKEND
         value: auto
       - key: SOFTWARE_EXECUTION_CONTROL_SUPABASE_READY

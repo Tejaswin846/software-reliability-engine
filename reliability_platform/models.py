@@ -256,6 +256,13 @@ class SLOEvaluationRequest(BaseModel):
     metrics: dict[str, float]
 
 
+class NotificationTestRequest(BaseModel):
+    project_id: str | None = Field(None, max_length=180)
+    destinations: list[Literal["dashboard", "slack", "email", "webhook"]] = Field(
+        default_factory=lambda: ["dashboard"], min_length=1, max_length=4
+    )
+
+
 class CircuitRequest(BaseModel):
     project_id: str | None = Field(None, max_length=180)
     dependency_type: Literal[

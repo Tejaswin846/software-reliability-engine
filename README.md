@@ -65,7 +65,7 @@ SENTRY_DSN=https://public-key@o0.ingest.sentry.io/0
 SENTRY_TRACES_SAMPLE_RATE=0.2
 SENTRY_ENABLE_LOGS=true
 SENTRY_ENVIRONMENT=production
-SENTRY_RELEASE=software@0.4.0
+SENTRY_RELEASE=software@0.4.1
 ```
 
 `SENTRY_DSN` is optional locally. When it is absent, monitoring is disabled
@@ -518,6 +518,11 @@ CLERK_JWT_ISSUER=https://your-clerk-instance.clerk.accounts.dev
 CLERK_WEBHOOK_SECRET=replace-with-your-clerk-webhook-secret
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=replace-with-your-server-only-service-role-key
+SUPABASE_LOAD_BALANCER_URL=https://your-load-balancer.supabase.co
+SUPABASE_READ_REPLICA_URL=https://your-read-replica.supabase.co
+SOFTWARE_SUPABASE_TIMEOUT_SECONDS=5
+SOFTWARE_SUPABASE_CIRCUIT_FAILURES=2
+SOFTWARE_SUPABASE_CIRCUIT_COOLDOWN_SECONDS=30
 ```
 
 See [deployment.md](deployment.md) for deployment details.

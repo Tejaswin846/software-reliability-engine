@@ -1,6 +1,6 @@
 # Backend upgrade implementation
 
-Version 0.4.0 implements the reliability backend blueprint as an authenticated,
+Version 0.4.1 implements the reliability backend blueprint as an authenticated,
 tenant-scoped platform. The API remains fail-closed for authorization, trusted-state
 checks, and durable execution finalization.
 
@@ -42,12 +42,16 @@ checks, and durable execution finalization.
   webhook notification delivery records
 - Evidence-backed human review cases with permission-scoped confirm, compensation,
   resume, and terminate decisions
+- Bounded Supabase clients with load-balancer/read-replica routing, endpoint
+  circuits, idempotent write rerouting, and failover diagnostics
+- Authenticated notification configuration and test-delivery endpoints, with
+  HTTPS/SSRF enforcement and HMAC-signed webhook payloads
 - Tenant quotas, retention, SSO/encryption/region controls, scoped service accounts,
   hash-only keys, key rotation, and confirmed tenant-data deletion
 
 ## SDK ingestion
 
-Python SDK 0.4.0 supports observations, OTLP batches, and framework events. The
+Python SDK 0.4.1 supports observations, OTLP batches, and framework events. The
 dependency-free Node.js SDK is in `software_sdk_js` and supports the same telemetry
 plus tool wrapping. Cloud ingestion requires a project API key or a scoped service
 account key with `telemetry:write`.

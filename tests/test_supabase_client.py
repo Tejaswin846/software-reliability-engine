@@ -65,6 +65,15 @@ class FakeClient:
         return FakeQuery(name, self.store, self.rows)
 
 
+class FailingClient:
+    def __init__(self):
+        self.calls = 0
+
+    def table(self, _name):
+        self.calls += 1
+        raise TimeoutError("endpoint timed out")
+
+
 class SupabaseClientTests(unittest.TestCase):
     def tearDown(self):
         supabase_client.reset_supabase_client()
@@ -154,7 +163,95 @@ class SupabaseClientTests(unittest.TestCase):
             "auth_request_password_reset",
             "auth_update_password",
         ]:
-            self.assertFalse(hasattr(supabase_client, name), f"{name} should be handled by Clerk")
+            self.assertFalse(
+                hasattr(supabase_client, name), f"{name} should be handled by Clerk"
+            )
+
+    def test_read_failure_uses_replica_and_opens_endpoint_circuit(self):
+        failing = FailingClient()
+        primary = FakeClient(
+            rows={"chats": [{"id": "chat_test", "user_id": "usr_test"}]}
+        )
+        clients = {
+            "https://load-balancer.example.com": failing,
+            "https://primary.example.com": primary,
+        }
+        environment = {
+            "SUPABASE_URL": "https://primary.example.com",
+            "SUPABASE_LOAD_BALANCER_URL": "https://load-balancer.example.com",
+            "SUPABASE_SERVICE_ROLE_KEY": "service-key",
+            "SOFTWARE_SUPABASE_CIRCUIT_FAILURES": "1",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(
+                supabase_client,
+                "_new_client",
+                side_effect=lambda url, _key: clients[url],
+            ),
+        ):
+            supabase_client.reset_supabase_client()
+            first = supabase_client.get_chat_history(
+                chat_id="chat_test", user_id="usr_test"
+            )
+            second = supabase_client.get_chat_history(
+                chat_id="chat_test", user_id="usr_test"
+            )
+        self.assertTrue(first["ok"])
+        self.assertTrue(first["failover_used"])
+        self.assertEqual(first["selected_endpoint"], "primary")
+        self.assertTrue(second["ok"])
+        self.assertFalse(second["failover_used"])
+        self.assertEqual(failing.calls, 1)
+
+    def test_idempotent_write_falls_back_from_load_balancer_to_primary(self):
+        failing = FailingClient()
+        primary = FakeClient()
+        clients = {
+            "https://load-balancer.example.com": failing,
+            "https://primary.example.com": primary,
+        }
+        environment = {
+            "SUPABASE_URL": "https://primary.example.com",
+            "SUPABASE_LOAD_BALANCER_URL": "https://load-balancer.example.com",
+            "SUPABASE_SERVICE_ROLE_KEY": "service-key",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(
+                supabase_client,
+                "_new_client",
+                side_effect=lambda url, _key: clients[url],
+            ),
+        ):
+            supabase_client.reset_supabase_client()
+            result = supabase_client.create_chat(
+                user_id="usr_test", title="Failover", chat_id="chat_test"
+            )
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["failover_used"])
+        self.assertEqual(result["selected_endpoint"], "primary")
+        self.assertEqual(primary.store["on_conflict"], "id")
+        self.assertEqual(primary.store["chats"]["id"], "chat_test")
+
+    def test_public_health_failure_does_not_expose_provider_error(self):
+        failing = FailingClient()
+        environment = {
+            "SUPABASE_URL": "https://primary.example.com",
+            "SUPABASE_SERVICE_ROLE_KEY": "service-key",
+        }
+        with (
+            patch.dict(os.environ, environment, clear=True),
+            patch.object(supabase_client, "_new_client", return_value=failing),
+        ):
+            supabase_client.reset_supabase_client()
+            health = supabase_client.supabase_health_check()
+        self.assertFalse(health["ok"])
+        self.assertEqual(
+            health["error"], "Supabase endpoints are currently unavailable."
+        )
+        self.assertNotIn("endpoint timed out", str(health))
+        self.assertEqual(health["failover_attempts"][0]["error_type"], "request_failed")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import ipaddress
+import json
 import os
 import socket
 from collections.abc import Callable
@@ -69,6 +72,36 @@ class ReliabilityNotificationDispatcher:
                 return False
         return True
 
+    def configuration_status(self) -> dict[str, Any]:
+        destinations: dict[str, dict[str, Any]] = {
+            "dashboard": {
+                "configured": True,
+                "endpoint_host": "matrixs-dashboard",
+            }
+        }
+        for destination_type, environment_name in self.ENVIRONMENT_ENDPOINTS.items():
+            endpoint = os.getenv(environment_name, "").strip()
+            destinations[destination_type] = {
+                "configured": bool(endpoint),
+                "endpoint_host": urlparse(endpoint).hostname if endpoint else None,
+                "https": urlparse(endpoint).scheme == "https" if endpoint else False,
+            }
+        token_configured = bool(os.getenv("SOFTWARE_ALERT_WEBHOOK_TOKEN", "").strip())
+        return {
+            "destinations": destinations,
+            "external_delivery_ready": any(
+                item["configured"] and item.get("https")
+                for name, item in destinations.items()
+                if name != "dashboard"
+            ),
+            "webhook_signing_configured": token_configured,
+            "custom_webhooks_enabled": os.getenv(
+                "SOFTWARE_ALERT_ALLOW_CUSTOM_WEBHOOKS", "false"
+            ).lower()
+            in {"1", "true", "yes", "on"},
+            "timeout_seconds": self.timeout_seconds,
+        }
+
     def deliver(
         self, destinations: list[Any], event: dict[str, Any]
     ) -> list[dict[str, Any]]:
@@ -132,10 +165,18 @@ class ReliabilityNotificationDispatcher:
             token = os.getenv("SOFTWARE_ALERT_WEBHOOK_TOKEN", "").strip()
             if token and destination_type in {"webhook", "email"}:
                 headers["Authorization"] = f"Bearer {token}"
+            encoded_payload = json.dumps(
+                payload, ensure_ascii=False, separators=(",", ":"), default=str
+            ).encode("utf-8")
+            if token and destination_type in {"webhook", "email"}:
+                signature = hmac.new(
+                    token.encode("utf-8"), encoded_payload, hashlib.sha256
+                ).hexdigest()
+                headers["X-Matrixs-Signature"] = f"sha256={signature}"
             try:
                 response = requests.post(
                     endpoint,
-                    json=payload,
+                    data=encoded_payload,
                     headers=headers,
                     timeout=self.timeout_seconds,
                     allow_redirects=False,

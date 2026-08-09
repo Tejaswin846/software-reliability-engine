@@ -85,12 +85,14 @@ def _deployment_version() -> str:
     explicit_release = os.getenv("SENTRY_RELEASE", "").strip()
     if explicit_release:
         return explicit_release
-    app_version = os.getenv("SOFTWARE_VERSION", "0.2.0").strip()
+    app_version = os.getenv("SOFTWARE_VERSION", "0.4.1").strip()
     commit = (
         os.getenv("RENDER_GIT_COMMIT", "").strip()
         or os.getenv("GIT_COMMIT", "").strip()
     )
-    return f"software@{app_version}+{commit[:12]}" if commit else f"software@{app_version}"
+    return (
+        f"software@{app_version}+{commit[:12]}" if commit else f"software@{app_version}"
+    )
 
 
 def _secret_values() -> list[str]:
@@ -177,7 +179,9 @@ def initialize_sentry() -> Dict[str, Any]:
     try:
         sentry_sdk.init(
             dsn=dsn,
-            environment=os.getenv("SENTRY_ENVIRONMENT", os.getenv("SOFTWARE_ENV", "development")),
+            environment=os.getenv(
+                "SENTRY_ENVIRONMENT", os.getenv("SOFTWARE_ENV", "development")
+            ),
             release=_DEPLOYMENT_VERSION,
             traces_sample_rate=_env_float("SENTRY_TRACES_SAMPLE_RATE", 0.2),
             enable_logs=os.getenv("SENTRY_ENABLE_LOGS", "true").lower() == "true",
@@ -307,6 +311,7 @@ def monitor_background_task(
 ) -> Callable[[F], F]:
     def decorator(function: F) -> F:
         if inspect.iscoroutinefunction(function):
+
             @wraps(function)
             async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
                 try:

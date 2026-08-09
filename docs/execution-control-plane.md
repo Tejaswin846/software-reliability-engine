@@ -26,6 +26,8 @@ invalidates every older worker lease.
 ## Production migration
 
 1. Correct and verify `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` on Render.
+   For read redundancy, also configure the official
+   `SUPABASE_LOAD_BALANCER_URL` and `SUPABASE_READ_REPLICA_URL` endpoints.
 2. Run `supabase_schema.sql` in the Supabase SQL editor.
 3. Run `supabase_execution_control.sql` and confirm every verification row reports
    `rls_enabled = true`.

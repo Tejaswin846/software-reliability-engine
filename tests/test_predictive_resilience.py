@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import sqlite3
 from pathlib import Path
 
@@ -449,3 +451,42 @@ def test_notification_delivery_disables_redirects_and_records_result(
     assert deliveries[0]["response_code"] == 202
     assert captured["allow_redirects"] is False
     assert captured["timeout"] == 5
+
+
+def test_webhook_delivery_is_signed_and_configuration_is_secret_safe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class Response:
+        status_code = 200
+
+    def post(url: str, **kwargs):
+        captured["url"] = url
+        captured.update(kwargs)
+        return Response()
+
+    monkeypatch.setenv(
+        "SOFTWARE_ALERT_WEBHOOK_URL", "https://alerts.example.com/matrixs"
+    )
+    monkeypatch.setenv("SOFTWARE_ALERT_WEBHOOK_TOKEN", "signing-secret")
+    monkeypatch.setattr(
+        ReliabilityNotificationDispatcher,
+        "_safe_endpoint",
+        staticmethod(lambda _url: True),
+    )
+    monkeypatch.setattr("reliability_platform.notifications.requests.post", post)
+    dispatcher = ReliabilityNotificationDispatcher()
+    status = dispatcher.configuration_status()
+    deliveries = dispatcher.deliver(
+        ["webhook"], {"summary": "Circuit opened", "incident_id": "incident-2"}
+    )
+    body = captured["data"]
+    assert isinstance(body, bytes)
+    expected = hmac.new(b"signing-secret", body, hashlib.sha256).hexdigest()
+    headers = captured["headers"]
+    assert isinstance(headers, dict)
+    assert headers["X-Matrixs-Signature"] == f"sha256={expected}"
+    assert deliveries[0]["status"] == "delivered"
+    assert status["destinations"]["webhook"]["endpoint_host"] == ("alerts.example.com")
+    assert "signing-secret" not in str(status)

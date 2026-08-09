@@ -230,6 +230,7 @@ class AIExecutionAPITests(unittest.TestCase):
                 anonymous.get("/api/reliability/health/history"),
                 anonymous.get("/api/reliability/incidents"),
                 anonymous.get("/api/reliability/circuits"),
+                anonymous.get("/api/reliability/notifications/status"),
                 anonymous.post(
                     "/api/reliability/health/predict",
                     json={
@@ -237,6 +238,10 @@ class AIExecutionAPITests(unittest.TestCase):
                         "component_type": "provider",
                         "component_name": "provider-a",
                     },
+                ),
+                anonymous.post(
+                    "/api/reliability/notifications/test",
+                    json={"destinations": ["dashboard"]},
                 ),
                 anonymous.post(
                     "/api/reliability/reviews",
@@ -251,6 +256,13 @@ class AIExecutionAPITests(unittest.TestCase):
                 ),
             ]
         self.assertTrue(all(response.status_code == 401 for response in responses))
+
+    def test_notification_status_is_authenticated_and_secret_safe(self):
+        response = self.client.get("/api/reliability/notifications/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()["notifications"]
+        self.assertTrue(payload["destinations"]["dashboard"]["configured"])
+        self.assertNotIn("SOFTWARE_ALERT_WEBHOOK_TOKEN", response.text)
 
 
 if __name__ == "__main__":

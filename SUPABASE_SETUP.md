@@ -22,11 +22,32 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SOFTWARE_EXECUTION_CONTROL_BACKEND=auto
 SOFTWARE_EXECUTION_CONTROL_SUPABASE_READY=true
+SUPABASE_LOAD_BALANCER_URL=https://your-load-balancer.supabase.co
+SUPABASE_READ_REPLICA_URL=https://your-read-replica.supabase.co
+SOFTWARE_SUPABASE_TIMEOUT_SECONDS=5
+SOFTWARE_SUPABASE_CIRCUIT_FAILURES=2
+SOFTWARE_SUPABASE_CIRCUIT_COOLDOWN_SECONDS=30
 ```
 
 Do not commit a real key. On Render, add both values under the Web Service
 environment settings. Do not expose `SUPABASE_SERVICE_ROLE_KEY` to browser
 JavaScript, SDK clients, or public docs.
+
+## Redundancy and bounded failure
+
+`SUPABASE_LOAD_BALANCER_URL` and `SUPABASE_READ_REPLICA_URL` are optional.
+When present, read operations try the load balancer, a dedicated read replica,
+and then the primary. Idempotent server writes try the load balancer and then
+the primary. Every call has a bounded timeout; repeatedly failing endpoints are
+removed from routing until their cooldown expires. Operation results expose
+only endpoint labels, timings, and failover state—not URLs or keys.
+
+Supabase read replicas are read-only. They improve read availability but cannot
+accept execution-control writes when the primary is unavailable. Do not point
+`SUPABASE_READ_REPLICA_URL` at an independently writable project: that would
+create split-brain state. Provision replicas and obtain the official load
+balancer endpoint in the Supabase infrastructure settings, then verify
+replication lag before enabling production traffic.
 
 ## Verify
 
@@ -39,6 +60,9 @@ GET /api/supabase/health
 When Supabase is not configured or cannot be reached, existing benchmark and
 dashboard APIs continue using SQLite. Benchmark responses include a
 `supabase_sync` object describing whether the remote mirror succeeded.
+The health response also reports whether load-balancer/read-replica redundancy
+is configured, which endpoint class served the check, and sanitized failover
+attempts.
 
 ## Chat APIs
 

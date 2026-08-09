@@ -190,7 +190,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("SOFTWARE_APP_NAME", "Software Reliability Engine")
-APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.4.0")
+APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.4.1")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
