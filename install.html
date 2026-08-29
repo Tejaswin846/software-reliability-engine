@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Install Matrixs</title>
-    <link rel="stylesheet" href="/saas.css?v=20260830a">
+    <link rel="stylesheet" href="/saas.css?v=20260830b">
     <link rel="stylesheet" href="/ui.css?v=20260808c">
     <script src="/ui.js?v=20260808c" defer></script>
   </head>
@@ -28,7 +28,7 @@
         <div class="row">
           <div>
             <h1>Connect a project to Matrixs</h1>
-            <p class="muted">Choose the Matrixs Cloud project, generate one short-lived command, and run it beside your Python project. No source-code paste or permanent API-key copy is required.</p>
+            <p class="muted">Install Matrixs, then run one clean command beside your Python project. The CLI asks permission and opens a secure local page for your Project ID and API key.</p>
           </div>
           <a class="button secondary" href="/dashboard">View Dashboard</a>
         </div>
@@ -39,11 +39,15 @@
         <div class="row">
           <div>
             <h2>Project Connection</h2>
-            <p class="muted">The generated command expires after 15 minutes and can be used only once.</p>
+            <p class="muted">The command contains no token, Project ID, or API key.</p>
           </div>
           <a class="button" href="/api-keys">Open Project Connection</a>
         </div>
-        <p class="security-note">After signing in, select a project and generate a one-time command. Matrixs exchanges the temporary token locally, creates a reversible backup, and verifies the connection without displaying a permanent API key.</p>
+        <div class="row">
+          <pre id="install-command-connect" class="code-snippet">matrixs connect</pre>
+          <button type="button" class="secondary" data-copy-target="install-command-connect">Copy command</button>
+        </div>
+        <p class="security-note">After you approve automatic integration, Matrixs collects credentials on a loopback-only page, creates a reversible backup, saves secrets to a git-ignored file, and verifies the connection. Choose manual integration in the terminal if you prefer to make the changes yourself.</p>
       </section>
 
       <section class="panel stack">
@@ -82,15 +86,15 @@
         <div class="install-steps">
           <article class="card"><h2>1. Install Matrixs</h2><p class="muted">Install the Python package once.</p></article>
           <article class="card"><h2>2. Run matrixs connect</h2><p class="muted">Matrixs discovers the Python project and asks for permission.</p></article>
-          <article class="card"><h2>3. Authorize once</h2><p class="muted">The short-lived token is exchanged automatically; no permanent API key is copied.</p></article>
-          <article class="card"><h2>4. Review changes</h2><p class="muted">Matrixs shows its plan and creates a reversible backup.</p></article>
-          <article class="card"><h2>5. Verify connection</h2><p class="muted">Matrixs sends a real test event and rolls back automatically if integration fails.</p></article>
+          <article class="card"><h2>3. Choose automatic or manual</h2><p class="muted">Approve Matrixs changes or open the manual guide. Nothing is changed before permission.</p></article>
+          <article class="card"><h2>4. Enter credentials</h2><p class="muted">The local setup page asks for Project ID and API key without putting either in the command.</p></article>
+          <article class="card"><h2>5. Save and verify</h2><p class="muted">Matrixs backs up the project, saves credentials locally, adds integration files, and sends a test event.</p></article>
           <article class="card"><h2>6. Run with Matrixs</h2><p class="muted">Use <code>matrixs run</code>; no source-code paste is required.</p></article>
         </div>
       </section>
     </main>
 
     <script src="/auth.js"></script>
-    <script src="/saas.js?v=20260830a"></script>
+    <script src="/saas.js?v=20260830b"></script>
   </body>
 </html>

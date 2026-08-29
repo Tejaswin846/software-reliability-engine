@@ -191,7 +191,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.4.1")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.5.0")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -7253,10 +7253,7 @@ def create_install_api_key(
         ) from error
 
     api_url = public_base_url(request).rstrip("/")
-    login_command = (
-        f"matrixs connect --api-url {api_url} --api-key {generated['api_key']} "
-        f"--project-id {project_id} --project-name {project_display_name}"
-    )
+    login_command = "matrixs connect"
     return {
         "ok": True,
         "api_key": generated["api_key"],
@@ -7276,7 +7273,7 @@ def create_install_api_key(
             "env": f"MATRIXS_API_KEY={generated['api_key']}",
             "test": "matrixs status",
         },
-        "message": "Legacy permanent API key created. Prefer a one-time Matrixs connection command.",
+        "message": "Permanent API key created for manual integration. The automatic Matrixs command stays secret-free.",
     }
 
 
@@ -7363,7 +7360,6 @@ def get_project(project_id: str, user: Dict[str, Any] = Depends(current_user)) -
 @app.post("/api/projects/{project_id}/connection-token")
 def create_project_connection_token(
     project_id: str,
-    request: Request,
     user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
     init_db()
@@ -7407,8 +7403,7 @@ def create_project_connection_token(
             email=user.get("email"),
             metadata={"token_id": token_id},
         )
-    api_url = public_base_url(request)
-    command = f'matrixs connect --token {generated["token"]} --api-url "{api_url}"'
+    command = "matrixs connect"
     return {
         "ok": True,
         "project": {"id": project["id"], "name": project["name"]},
@@ -7418,7 +7413,7 @@ def create_project_connection_token(
             "expires_at": expires_at.isoformat(),
             "command": command,
         },
-        "message": "One-time Matrixs connection command created.",
+        "message": "Matrixs now uses the same secret-free connection command for every project.",
     }
 
 
@@ -8155,8 +8150,10 @@ def api_sdk_docs() -> Dict[str, Any]:
             "team/workspace features",
         ],
         "cloud_connection": [
-            "Generate a one-time command at /api-keys",
-            "matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com",
+            "Run the secret-free command beside the Python project",
+            "matrixs connect",
+            "Approve automatic integration, then enter Project ID and API key on the local setup page",
+            "Decline automatic integration to open the manual guide",
         ],
     }
 

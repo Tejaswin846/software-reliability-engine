@@ -1,7 +1,7 @@
 # Matrixs Zero-Code Connector Guide
 
 The `matrixs` CLI connects Python AI-agent projects to the Matrixs reliability
-dashboard without requiring source-code instrumentation or a copied permanent API key.
+dashboard without requiring source-code instrumentation or putting credentials in the command.
 
 ## Install
 
@@ -15,22 +15,26 @@ Local repo development:
 pip install -e .
 ```
 
-## Generate a One-Time Command
+## Prepare Project Credentials
 
-Create or select a cloud project, open `/api-keys`, and choose **Generate
-connection command**. The token expires after 15 minutes and works once.
+Create or select a cloud project, open `/api-keys`, and keep its Project ID and
+API key ready. They are entered later on a page served only by the local CLI.
 
 ## Connect
 
-Run the generated command beside the Python project:
+Run the same clean command beside the Python project:
 
 ```bash
-matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
+matrixs connect
 ```
 
-Matrixs discovers supported projects, shows the exact plan, asks permission,
-creates a timestamped backup, writes reversible configuration, exchanges the
-token for a local project credential, and sends a real verification workflow.
+Matrixs discovers supported projects and asks permission. If approved, it opens a
+nonce-protected loopback page for the Project ID and API key, creates a timestamped
+backup, writes reversible configuration, saves the credential in `.matrixs/.env`,
+and sends a real verification workflow.
+
+Decline automatic integration when prompted, or run `matrixs connect --manual`,
+to open the manual guide without changing project files.
 
 ## Commands
 

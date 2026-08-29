@@ -3,24 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Quick Start - Software Docs</title>
+  <title>Quick Start - Matrixs Docs</title>
   <link rel="stylesheet" href="/docs.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/install">Install SDK</a><a href="/docs/api-reference">API Reference</a></nav></header>
+  <header class="topbar"><a class="brand" href="/developer-docs">Matrixs Docs</a><nav class="nav"><a href="/install">Install SDK</a><a href="/docs/api-reference">API Reference</a></nav></header>
   <main class="layout">
     <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/installation">Installation</a><a href="/docs/authentication">Authentication</a><a href="/docs/sdk-usage">SDK Usage</a></aside>
     <article class="doc">
       <h1>Quick Start</h1>
       <h2>1. Install Matrixs</h2>
       <pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</code></pre>
-      <h2>2. Generate a one-time connection command</h2>
-      <p>Open <a href="/api-keys">Project Connection</a>, choose a project, and generate a command that expires after 15 minutes and works once.</p>
-      <h2>3. Run the generated command</h2>
-      <pre><code>matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
+      <h2>2. Open Project Connection</h2>
+      <p>Create a project and permanent API key at <a href="/api-keys">Project Connection</a>, then keep the Project ID and API key ready for the secure local setup page.</p>
+      <h2>3. Run the command</h2>
+      <pre><code>matrixs connect
 matrixs status
 matrixs run</code></pre>
-      <p>Matrixs discovers the Python project, shows its plan, creates a reversible backup, configures monitoring, and verifies the cloud connection.</p>
+      <p>Matrixs discovers the Python project, asks permission, opens the local credential page, creates a reversible backup, saves the credentials locally, configures monitoring, and verifies the cloud connection. Choose manual integration when prompted if you prefer to make the changes yourself.</p>
       <h2>4. View results</h2>
       <p>Open <a href="/dashboard">/dashboard</a> after signing in. Project-scoped SDK workflows appear in the SDK Workflows panel.</p>
     </article>

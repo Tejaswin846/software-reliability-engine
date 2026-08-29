@@ -41,8 +41,9 @@ class MatrixsConnectionTokenTests(unittest.TestCase):
         )
         self.assertEqual(created.status_code, 200)
         connection = created.json()["connection"]
-        self.assertIn("matrixs connect --token mxct_", connection["command"])
+        self.assertEqual(connection["command"], "matrixs connect")
         self.assertNotIn("--api-key", connection["command"])
+        self.assertNotIn("--token", connection["command"])
 
         exchanged = self.client.post(
             "/api/sdk/connect/exchange",

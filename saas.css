@@ -390,8 +390,34 @@ button:disabled {
 .connection-steps {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   margin-top: 16px;
+}
+
+.manual-credential {
+  align-items: center;
+  background: #f5f8fc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.manual-credential code {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.field-label {
+  color: var(--muted);
+  display: block;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  text-transform: uppercase;
 }
 
 .step-number {
@@ -479,6 +505,11 @@ th {
   .install-steps,
   .connection-steps {
     grid-template-columns: 1fr;
+  }
+
+  .manual-credential {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .shell,

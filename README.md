@@ -258,10 +258,10 @@ Install Matrixs:
 pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
-Generate a one-time connection command at `/api-keys`, then run it beside the Python project:
+Run the secret-free connection command beside the Python project:
 
 ```bash
-matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
+matrixs connect
 matrixs status
 matrixs run
 ```
@@ -292,15 +292,16 @@ Then:
 2. Use local validation, local plans, dry-run examples, and sandbox workflows without signing in
 3. Create an account at `/register` only when you need cloud features
 4. Create a project at `/projects`
-5. Generate a one-time connection command at `/api-keys`
-6. Run the generated `matrixs connect` command beside the project
-7. Let Matrixs verify the connection automatically
-8. Open `/dashboard`
+5. Keep the Project ID and API key from `/api-keys` ready
+6. Run `matrixs connect` beside the project and approve automatic integration
+7. Enter the Project ID and API key on the secure local page Matrixs opens
+8. Let Matrixs save the credentials locally and verify the connection automatically
+9. Open `/dashboard`
 
 Example:
 
 ```bash
-matrixs connect --token mxct_... --api-url http://127.0.0.1:8300
+MATRIXS_API_URL=http://127.0.0.1:8300 matrixs connect
 matrixs status
 matrixs run
 ```

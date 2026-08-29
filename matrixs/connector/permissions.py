@@ -28,7 +28,8 @@ def request_integration_permission(
     print("- create Matrixs configuration files")
     print("- update required startup/deployment configuration")
     print("- add runtime instrumentation configuration")
-    print("- save Matrixs project credentials")
+    print("- open a secure local page for your Project ID and API key")
+    print("- save those credentials in a git-ignored local file")
     print("- create backups before changes")
     print("Matrixs will not modify unrelated files.")
     while True:

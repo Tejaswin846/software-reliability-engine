@@ -2,12 +2,18 @@ from __future__ import annotations
 
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from urllib.parse import urlencode, urlsplit
+from urllib.request import Request, urlopen
+from unittest.mock import patch
 
 from matrixs.cli import _discover_or_prompt, main
 from matrixs.connector.analyzer import analyze_project
+from matrixs.connector.browser_setup import collect_credentials_in_browser
 from matrixs.connector.discover import discover_projects
+from matrixs.connector.models import Credentials
 from matrixs.connector.permissions import ask_yes_no, request_integration_permission
 
 
@@ -78,6 +84,61 @@ class MatrixsConnectorTests(unittest.TestCase):
         self.assertTrue(allowed)
         self.assertEqual(opened, [])
 
+    def test_local_browser_page_collects_credentials_without_putting_secrets_in_url(self) -> None:
+        page_html = []
+        opened_urls = []
+
+        def open_and_submit(url: str) -> bool:
+            opened_urls.append(url)
+
+            def submit() -> None:
+                with urlopen(url, timeout=3) as response:
+                    page_html.append(response.read().decode("utf-8"))
+                parsed = urlsplit(url)
+                body = urlencode(
+                    {
+                        "project_id": "prj_browser_test",
+                        "api_key": "mx_browser_secret",
+                        "project_name": "Browser Agent",
+                        "api_url": "https://matrixs.example/",
+                    }
+                ).encode("utf-8")
+                request = Request(
+                    f"http://127.0.0.1:{parsed.port}/connect?{parsed.query}",
+                    data=body,
+                    method="POST",
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                )
+                with urlopen(request, timeout=3) as response:
+                    response.read()
+
+            threading.Thread(target=submit, daemon=True).start()
+            return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            credentials = collect_credentials_in_browser(
+                Path(directory),
+                project_name="Browser Agent",
+                timeout=3,
+                browser_open=open_and_submit,
+            )
+
+        self.assertEqual(credentials.project_id, "prj_browser_test")
+        self.assertEqual(credentials.api_key, "mx_browser_secret")
+        self.assertEqual(credentials.api_url, "https://matrixs.example")
+        self.assertIn('name="project_id"', page_html[0])
+        self.assertIn('name="api_key" type="password"', page_html[0])
+        self.assertIn("served only on your computer", page_html[0])
+        self.assertNotIn("mx_browser_secret", opened_urls[0])
+        self.assertNotIn("prj_browser_test", opened_urls[0])
+
+    def test_manual_connect_opens_guide_without_discovering_or_changing_files(self) -> None:
+        with patch("matrixs.cli._open_manual_guide") as open_manual:
+            result = main(["connect", "--manual"])
+
+        self.assertEqual(result, 0)
+        open_manual.assert_called_once_with()
+
     def test_connect_status_and_disconnect_are_reversible(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -121,6 +182,31 @@ class MatrixsConnectorTests(unittest.TestCase):
             self.assertFalse(secret_path.exists())
             self.assertEqual((root / ".gitignore").read_text(encoding="utf-8"), ".venv/\n")
             self.assertTrue((root / ".matrixs" / "backups").is_dir())
+
+    def test_secret_free_connect_uses_browser_credentials_even_when_local_credentials_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_fastapi_project(root)
+            (root / ".matrixs").mkdir()
+            (root / ".matrixs" / ".env").write_text(
+                "MATRIXS_PROJECT_ID=prj_old\nMATRIXS_API_KEY=mx_old\n",
+                encoding="utf-8",
+            )
+            entered = Credentials(
+                project_id="prj_new",
+                api_key="mx_new",
+                api_url="https://matrixs.example",
+                project_name="New Agent",
+                installation_id="inst_new",
+            )
+            with patch("matrixs.cli.collect_credentials_in_browser", return_value=entered) as collect:
+                result = main(["connect", "--path", str(root), "--yes", "--no-verify"])
+
+            self.assertEqual(result, 0)
+            collect.assert_called_once()
+            saved = (root / ".matrixs" / ".env").read_text(encoding="utf-8")
+            self.assertIn("MATRIXS_PROJECT_ID=prj_new", saved)
+            self.assertIn("MATRIXS_API_KEY=mx_new", saved)
 
 
 if __name__ == "__main__":

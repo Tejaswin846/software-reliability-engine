@@ -28,11 +28,11 @@
           <p class="eyebrow">Developer Onboarding</p>
           <h1>Connect your Python AI project without editing its source.</h1>
           <p class="lead">
-            Generate one short-lived command in Matrixs, run it beside your project, approve the plan, and let the connector configure and verify everything automatically.
+            Run one clean command beside your project, approve automatic integration, and enter your Project ID and API key on the secure local setup page Matrixs opens.
           </p>
           <div class="hero-actions">
             <a class="button" href="/projects">Create Project</a>
-            <a class="button secondary" href="/api-keys">Generate Connection Command</a>
+            <a class="button secondary" href="/api-keys">Open Project Connection</a>
             <a class="button secondary" href="/dashboard">View Dashboard</a>
           </div>
         </div>
@@ -45,7 +45,7 @@
             <span class="muted">terminal</span>
           </div>
           <div class="code-block">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
-matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
+matrixs connect
 matrixs status</div>
         </div>
       </section>
@@ -59,22 +59,22 @@ matrixs status</div>
             <a href="/projects">Open Projects</a>
           </article>
           <article class="card">
-            <h3>Step 2: Generate one-time command</h3>
-            <p>Matrixs creates a single-use token that expires in 15 minutes. No permanent API key is displayed.</p>
+            <h3>Step 2: Copy the command</h3>
+            <p>Copy <code>matrixs connect</code>. It contains no token, Project ID, or API key.</p>
             <a href="/api-keys">Open Project Connection</a>
           </article>
           <article class="card">
             <h3>Step 3: Run beside your project</h3>
-            <p>Install Matrixs, then run the generated command from the folder containing your project.</p>
+            <p>Install Matrixs, then run <code>matrixs connect</code> from the folder containing your project.</p>
             <div class="code-block">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</div>
           </article>
           <article class="card">
-            <h3>Step 4: Review and approve</h3>
-            <p>Matrixs discovers supported projects, shows every planned change, and asks permission before writing.</p>
+            <h3>Step 4: Choose automatic or manual</h3>
+            <p>Matrixs asks permission before any change. Decline to open the manual integration guide.</p>
           </article>
           <article class="card">
             <h3>Step 5: Automatic verification</h3>
-            <p>The CLI exchanges the token once, creates a reversible backup, configures Matrixs, and sends a real verification event.</p>
+            <p>The CLI opens a private local credential page, then creates a reversible backup, configures Matrixs, and sends a real verification event.</p>
           </article>
           <article class="card">
             <h3>Step 6: Run normally</h3>

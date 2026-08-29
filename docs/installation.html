@@ -3,11 +3,11 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Installation - Software Docs</title>
+  <title>Installation - Matrixs Docs</title>
   <link rel="stylesheet" href="/docs.css">
 </head>
 <body>
-  <header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/onboarding">Onboarding</a><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header>
+  <header class="topbar"><a class="brand" href="/developer-docs">Matrixs Docs</a><nav class="nav"><a href="/onboarding">Onboarding</a><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header>
   <main class="layout">
     <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/authentication">Authentication</a><a href="/docs/troubleshooting">Troubleshooting</a></aside>
     <article class="doc">
@@ -15,9 +15,9 @@
       <h2>Install Matrixs</h2>
       <pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</code></pre>
       <p>The package includes the <code>matrixs</code> connector and the reliability runtime.</p>
-      <h2>Connect without copying an API key</h2>
-      <pre><code>matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com</code></pre>
-      <p>Generate this single-use command from <a href="/api-keys">Project Connection</a>. Matrixs stores the exchanged credential locally and never displays it in the standard flow.</p>
+      <h2>Connect with a secret-free command</h2>
+      <pre><code>matrixs connect</code></pre>
+      <p>Matrixs asks permission, then opens a loopback-only page for your Project ID and API key. It stores the credentials in a git-ignored local file, applies the integration, and verifies the connection. Decline automatic integration to use the manual guide.</p>
       <h2>Develop from this repository</h2>
       <pre><code>python -m pip install --upgrade pip
 pip install -e .</code></pre>

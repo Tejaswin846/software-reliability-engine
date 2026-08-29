@@ -45,15 +45,23 @@ class ClerkPublicSDKTests(unittest.TestCase):
 
     def test_sdk_install_is_public_without_login(self):
         install = self.client.get("/install")
+        connection = self.client.get("/api-keys")
         sdk = self.client.get("/sdk")
         docs = self.client.get("/api/sdk/docs")
 
         self.assertEqual(install.status_code, 200)
+        self.assertEqual(connection.status_code, 200)
         self.assertEqual(sdk.status_code, 200)
         self.assertEqual(docs.status_code, 200)
         self.assertIn("pip install git+https://github.com/Tejaswin846/software-reliability-engine.git", install.text)
         self.assertIn("Project Connection", install.text)
         self.assertIn("Open Project Connection", install.text)
+        self.assertIn(">matrixs connect<", install.text)
+        self.assertNotIn("matrixs connect --token", install.text)
+        self.assertIn('<pre id="connection-command" class="code-snippet">matrixs connect</pre>', connection.text)
+        self.assertIn("Manual integration (Project ID + API key)", connection.text)
+        self.assertNotIn("Generate connection command", connection.text)
+        self.assertNotIn("--token", connection.text)
         self.assertNotIn("Show my API key", install.text)
         self.assertIn("pip install git+https://github.com/Tejaswin846/software-reliability-engine.git", docs.json()["install"]["python"])
         self.assertIn("supports Python 3.10+", docs.json()["install"]["node"])
@@ -120,8 +128,8 @@ class ClerkPublicSDKTests(unittest.TestCase):
         payload = response.json()
         self.assertTrue(payload["api_key"].startswith("mx_"))
         self.assertEqual(payload["project"]["name"], "simple-agent")
-        self.assertIn("matrixs connect --api-url", payload["commands"]["login"])
-        self.assertIn(payload["api_key"], payload["commands"]["login"])
+        self.assertEqual(payload["commands"]["login"], "matrixs connect")
+        self.assertNotIn(payload["api_key"], payload["commands"]["login"])
         with app.connect() as db:
             project = db.execute(
                 "SELECT id, name FROM projects WHERE user_id = ?",

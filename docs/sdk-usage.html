@@ -1,3 +1,51 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connector Usage - Matrixs Docs</title><link rel="stylesheet" href="/docs.css"></head><body><header class="topbar"><a class="brand" href="/developer-docs">Matrixs Docs</a><nav class="nav"><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header><main class="layout"><aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/api-keys">Project Connection</a><a href="/docs/guardrails-guide">Guardrails</a></aside><article class="doc"><h1>Matrixs Connector</h1><p>The connector configures supported Python projects without requiring source-code instrumentation.</p><h2>Connect</h2><pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
-matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com</code></pre><h2>Run</h2><pre><code>matrixs status
-matrixs run</code></pre><h2>What Matrixs does</h2><ul><li>Discovers supported Python projects.</li><li>Shows the exact integration plan and asks permission.</li><li>Backs up every changed path.</li><li>Stores credentials outside source code.</li><li>Verifies the connection with a real workflow.</li><li>Rolls back automatically if verification fails.</li></ul></article></main></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Integration Guide - Matrixs Docs</title>
+  <link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+  <header class="topbar"><a class="brand" href="/developer-docs">Matrixs Docs</a><nav class="nav"><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header>
+  <main class="layout">
+    <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/api-keys">Project Connection</a><a href="/docs/guardrails-guide">Guardrails</a></aside>
+    <article class="doc">
+      <h1>Matrixs Integration</h1>
+      <h2>Automatic integration</h2>
+      <pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
+matrixs connect</code></pre>
+      <p>Matrixs discovers the project and asks permission. If approved, it opens a secure page served only on your computer for the Project ID and API key. It then backs up changed paths, saves credentials in a git-ignored local file, adds the runtime integration, and verifies the connection.</p>
+
+      <h2>Manual integration</h2>
+      <p>If you decline automatic changes, install the package and set these environment variables in your own secret manager or local <code>.env</code> file:</p>
+      <pre><code>MATRIXS_PROJECT_ID=prj_your_project_id
+MATRIXS_API_KEY=mx_your_api_key
+MATRIXS_API_URL=https://software-reliability-engine.onrender.com
+MATRIXS_PROJECT_NAME=your-project</code></pre>
+      <p>Then add the monitor where your agent workflow starts:</p>
+      <pre><code>import os
+from matrixs import ReliabilityMonitor
+
+monitor = ReliabilityMonitor(
+    project_name=os.environ["MATRIXS_PROJECT_NAME"],
+    api_url=os.environ["MATRIXS_API_URL"],
+    api_key=os.environ["MATRIXS_API_KEY"],
+)
+
+with monitor.track_workflow("agent-run") as workflow:
+    workflow.track_stage("started")
+    # Run your existing agent code here.
+    workflow.complete(success=True, confidence=1.0)
+
+monitor.flush()</code></pre>
+      <p>Keep API keys out of source control. Create or revoke a manual key in <a href="/api-keys">Project Connection</a>.</p>
+
+      <h2>Run and verify</h2>
+      <pre><code>matrixs status
+matrixs run</code></pre>
+      <p>Automatic integration uses these commands after setup. For a fully manual integration, run the application with your normal start command and confirm its workflow in the Matrixs Reliability dashboard.</p>
+    </article>
+  </main>
+</body>
+</html>
