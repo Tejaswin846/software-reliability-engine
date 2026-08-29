@@ -196,9 +196,24 @@ async function loadProjects() {
       : `<div class="card muted">No projects yet. Create one to connect an agent.</div>`;
   }
   if (select) {
-    select.innerHTML = response.projects.map((project) => (
-      `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`
-    )).join("");
+    const hasProjects = response.projects.length > 0;
+    select.innerHTML = hasProjects
+      ? response.projects.map((project) => (
+        `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`
+      )).join("")
+      : `<option value="">Create a project first</option>`;
+    const connectionButton = document.getElementById("create-connection-command");
+    const keyButton = document.getElementById("create-key-button");
+    const emptyProjectHelp = document.getElementById("empty-project-help");
+    if (connectionButton) {
+      connectionButton.disabled = !hasProjects;
+    }
+    if (keyButton) {
+      keyButton.disabled = !hasProjects;
+    }
+    if (emptyProjectHelp) {
+      emptyProjectHelp.hidden = hasProjects;
+    }
     const query = new URLSearchParams(window.location.search);
     const selected = query.get("project");
     if (selected) {

@@ -378,7 +378,7 @@ button:disabled {
 }
 
 .connection-result[hidden] {
-  display: none;
+  display: none !important;
 }
 
 .security-note {
