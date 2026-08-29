@@ -13,6 +13,7 @@ import random
 import secrets
 from contextlib import asynccontextmanager
 from collections import Counter, defaultdict
+from contextlib import closing
 from datetime import datetime, timezone
 from datetime import timedelta
 from pathlib import Path
@@ -189,7 +190,7 @@ except ImportError:
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
-APP_NAME = os.getenv("SOFTWARE_APP_NAME", "Software Reliability Engine")
+APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
 APP_VERSION = os.getenv("SOFTWARE_VERSION", "0.4.1")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
@@ -338,11 +339,20 @@ def verify_api_key_hash(api_key: str, key_hash: str) -> bool:
 
 
 def generate_api_key() -> Dict[str, str]:
-    raw_key = f"sw_{secrets.token_urlsafe(32)}"
+    raw_key = f"mx_{secrets.token_urlsafe(32)}"
     return {
         "api_key": raw_key,
         "key_hash": hash_api_key(raw_key),
         "key_prefix": raw_key[:14],
+    }
+
+
+def generate_connection_token() -> Dict[str, str]:
+    raw_token = f"mxct_{secrets.token_urlsafe(28)}"
+    return {
+        "token": raw_token,
+        "token_hash": hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+        "token_prefix": raw_token[:16],
     }
 
 
@@ -1133,6 +1143,25 @@ def _initialize_database() -> None:
                 is_active INTEGER NOT NULL DEFAULT 1
             );
 
+            CREATE TABLE IF NOT EXISTS project_connection_tokens (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                token_prefix TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                used_at TEXT,
+                api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_project_connection_tokens_project
+                ON project_connection_tokens(project_id, created_at DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_project_connection_tokens_expiry
+                ON project_connection_tokens(expires_at, used_at);
+
             CREATE TABLE IF NOT EXISTS plans (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -1853,6 +1882,16 @@ class OrganizationTransferOwnership(BaseModel):
 
 class APIKeyCreate(BaseModel):
     pass
+
+
+class SDKConnectionExchange(BaseModel):
+    token: str = Field(..., min_length=20, max_length=240)
+    installation_id: Optional[str] = Field(None, max_length=180)
+    device_label: Optional[str] = Field(None, max_length=180)
+    operating_system: Optional[str] = Field(None, max_length=180)
+    runtime: Optional[str] = Field(None, max_length=180)
+    environment: str = Field("development", max_length=80)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
 class SubscriptionChange(BaseModel):
@@ -2656,10 +2695,11 @@ def record_failure(
 
 
 def require_sdk_api_key(
+    x_matrixs_api_key: Optional[str] = Header(None),
     x_software_api_key: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ) -> Dict[str, Any]:
-    supplied = x_software_api_key
+    supplied = x_matrixs_api_key or x_software_api_key
     if not supplied and authorization:
         prefix = "Bearer "
         supplied = authorization[len(prefix):].strip() if authorization.startswith(prefix) else authorization.strip()
@@ -5376,6 +5416,8 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "install.html": BASE_DIR / "install.html",
         "install_software_sdk.bat": BASE_DIR / "install_software_sdk.bat",
         "install_software_sdk.ps1": BASE_DIR / "install_software_sdk.ps1",
+        "install_matrixs.bat": BASE_DIR / "install_matrixs.bat",
+        "install_matrixs.ps1": BASE_DIR / "install_matrixs.ps1",
         "benchmark_runner.html": BASE_DIR / "benchmark_runner.html",
         "benchmark_runner.js": BASE_DIR / "benchmark_runner.js",
         "failure_analysis.html": BASE_DIR / "failure_analysis.html",
@@ -5947,6 +5989,24 @@ def download_windows_powershell_installer() -> FileResponse:
         BASE_DIR / "install_software_sdk.ps1",
         media_type="application/octet-stream",
         filename="install_software_sdk.ps1",
+    )
+
+
+@app.get("/install_matrixs.bat", include_in_schema=False)
+def download_matrixs_batch_installer() -> FileResponse:
+    return FileResponse(
+        BASE_DIR / "install_matrixs.bat",
+        media_type="application/octet-stream",
+        filename="install_matrixs.bat",
+    )
+
+
+@app.get("/install_matrixs.ps1", include_in_schema=False)
+def download_matrixs_powershell_installer() -> FileResponse:
+    return FileResponse(
+        BASE_DIR / "install_matrixs.ps1",
+        media_type="application/octet-stream",
+        filename="install_matrixs.ps1",
     )
 
 
@@ -7194,8 +7254,8 @@ def create_install_api_key(
 
     api_url = public_base_url(request).rstrip("/")
     login_command = (
-        f"software login --api-url {api_url} "
-        f"--api-key {generated['api_key']} --project-name {project_display_name}"
+        f"matrixs connect --api-url {api_url} --api-key {generated['api_key']} "
+        f"--project-id {project_id} --project-name {project_display_name}"
     )
     return {
         "ok": True,
@@ -7211,12 +7271,12 @@ def create_install_api_key(
             "replaced_existing_keys": replaced_existing_keys,
         },
         "commands": {
-            "install": "pip install software-sdk",
+            "install": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
             "login": login_command,
-            "env": f"SOFTWARE_API_KEY={generated['api_key']}",
-            "test": "software test",
+            "env": f"MATRIXS_API_KEY={generated['api_key']}",
+            "test": "matrixs status",
         },
-        "message": "Copy this API key now. It will not be shown again.",
+        "message": "Legacy permanent API key created. Prefer a one-time Matrixs connection command.",
     }
 
 
@@ -7298,6 +7358,68 @@ def get_project(project_id: str, user: Dict[str, Any] = Depends(current_user)) -
         project = user_project_or_404(db, user["id"], project_id)
         workflows = dashboard_sdk_payload([project_id])
     return {"ok": True, "project": row_to_dict(project), "sdk_workflows": workflows}
+
+
+@app.post("/api/projects/{project_id}/connection-token")
+def create_project_connection_token(
+    project_id: str,
+    request: Request,
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    init_db()
+    generated = generate_connection_token()
+    token_id = f"ct_{uuid.uuid4().hex}"
+    created_at = datetime.now(timezone.utc)
+    expires_at = created_at + timedelta(minutes=15)
+    with closing(connect()) as db, db:
+        project = project_permission_or_404(db, user["id"], project_id, "developer")
+        db.execute(
+            """
+            UPDATE project_connection_tokens
+            SET expires_at = ?
+            WHERE project_id = ? AND used_at IS NULL AND expires_at > ?
+            """,
+            (created_at.isoformat(), project_id, created_at.isoformat()),
+        )
+        db.execute(
+            """
+            INSERT INTO project_connection_tokens (
+                id, user_id, project_id, token_hash, token_prefix,
+                created_at, expires_at, used_at, api_key_id, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?)
+            """,
+            (
+                token_id,
+                user["id"],
+                project_id,
+                generated["token_hash"],
+                generated["token_prefix"],
+                created_at.isoformat(),
+                expires_at.isoformat(),
+                json_dumps({"source": "web_connection_flow"}),
+            ),
+        )
+        record_analytics_event(
+            db,
+            "project_connection_token_created",
+            user_id=user["id"],
+            project_id=project_id,
+            email=user.get("email"),
+            metadata={"token_id": token_id},
+        )
+    api_url = public_base_url(request)
+    command = f'matrixs connect --token {generated["token"]} --api-url "{api_url}"'
+    return {
+        "ok": True,
+        "project": {"id": project["id"], "name": project["name"]},
+        "connection": {
+            "token": generated["token"],
+            "token_prefix": generated["token_prefix"],
+            "expires_at": expires_at.isoformat(),
+            "command": command,
+        },
+        "message": "One-time Matrixs connection command created.",
+    }
 
 
 @app.delete("/api/projects/{project_id}")
@@ -7583,6 +7705,102 @@ def api_dashboard_sdk_workflows(
     _user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
     return {"ok": True, "sdk_workflows": dashboard_sdk_payload()}
+
+
+@app.post("/api/sdk/connect/exchange")
+def sdk_exchange_connection_token(payload: SDKConnectionExchange) -> Dict[str, Any]:
+    init_db()
+    token_hash = hashlib.sha256(payload.token.encode("utf-8")).hexdigest()
+    timestamp = datetime.now(timezone.utc)
+    installation_id = payload.installation_id or f"inst_{uuid.uuid4().hex}"
+    with closing(connect()) as db, db:
+        token_row = db.execute(
+            """
+            SELECT connection.*, projects.name AS project_name
+            FROM project_connection_tokens connection
+            JOIN projects ON projects.id = connection.project_id
+            WHERE connection.token_hash = ?
+            """,
+            (token_hash,),
+        ).fetchone()
+        if not token_row:
+            raise HTTPException(status_code=404, detail="Matrixs connection token is invalid.")
+        if token_row["used_at"]:
+            raise HTTPException(status_code=410, detail="Matrixs connection token has already been used.")
+        try:
+            expiry = datetime.fromisoformat(str(token_row["expires_at"]).replace("Z", "+00:00"))
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError) as error:
+            raise HTTPException(status_code=410, detail="Matrixs connection token has expired.") from error
+        if expiry <= timestamp:
+            raise HTTPException(status_code=410, detail="Matrixs connection token has expired.")
+
+        generated_key = generate_api_key()
+        api_key_id = f"key_{uuid.uuid4().hex}"
+        db.execute(
+            """
+            INSERT INTO api_keys (
+                id, user_id, project_id, key_hash, key_prefix,
+                created_at, last_used_at, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+            """,
+            (
+                api_key_id,
+                token_row["user_id"],
+                token_row["project_id"],
+                generated_key["key_hash"],
+                generated_key["key_prefix"],
+                timestamp.isoformat(),
+            ),
+        )
+        updated = db.execute(
+            """
+            UPDATE project_connection_tokens
+            SET used_at = ?, api_key_id = ?, metadata_json = ?
+            WHERE id = ? AND used_at IS NULL
+            """,
+            (
+                timestamp.isoformat(),
+                api_key_id,
+                json_dumps(
+                    {
+                        **payload.metadata,
+                        "source": "matrixs_connect",
+                        "installation_id": installation_id,
+                        "device_label": payload.device_label or "Matrixs-connected device",
+                        "operating_system": payload.operating_system or "Unknown",
+                        "runtime": payload.runtime or "Unknown",
+                        "environment": payload.environment,
+                    }
+                ),
+                token_row["id"],
+            ),
+        )
+        if updated.rowcount != 1:
+            raise HTTPException(status_code=409, detail="Matrixs connection token was already claimed.")
+        record_analytics_event(
+            db,
+            "project_connected",
+            user_id=token_row["user_id"],
+            project_id=token_row["project_id"],
+            metadata={
+                "token_id": token_row["id"],
+                "installation_id": installation_id,
+                "source": "matrixs_connect",
+            },
+        )
+    return {
+        "ok": True,
+        "project": {"id": token_row["project_id"], "name": token_row["project_name"]},
+        "installation": {
+            "id": installation_id,
+            "device_label": payload.device_label or "Matrixs-connected device",
+        },
+        "api_key": generated_key["api_key"],
+        "api_key_prefix": generated_key["key_prefix"],
+        "message": "Matrixs project connection authorized.",
+    }
 
 
 @app.get("/api/sdk/status")
@@ -7917,8 +8135,8 @@ def api_sdk_docs() -> Dict[str, Any]:
         "auth_required_for_install": False,
         "auth_required_for_docs": False,
         "install": {
-            "python": "pip install software-sdk",
-            "node": "npm install software-sdk",
+            "python": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
+            "node": "Matrixs zero-code connector currently supports Python 3.10+",
             "github": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
             "local": "pip install -e .",
         },
@@ -7936,7 +8154,10 @@ def api_sdk_docs() -> Dict[str, Any]:
             "external app integrations",
             "team/workspace features",
         ],
-        "optional_cloud_login": ["software login", "SOFTWARE_API_KEY=..."],
+        "cloud_connection": [
+            "Generate a one-time command at /api-keys",
+            "matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com",
+        ],
     }
 
 

@@ -12,16 +12,15 @@
     <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/installation">Installation</a><a href="/docs/authentication">Authentication</a><a href="/docs/sdk-usage">SDK Usage</a></aside>
     <article class="doc">
       <h1>Quick Start</h1>
-      <h2>1. Install publicly</h2>
-      <pre><code>pip install software-sdk
-npm install software-sdk</code></pre>
-      <h2>2. Try local mode</h2>
-      <p>Use local validation, local plans, dry-run examples, and sandbox workflows without signing in.</p>
-      <h2>3. Connect cloud when needed</h2>
-      <pre><code>software login
-# or
-SOFTWARE_API_KEY=sw_your_key</code></pre>
-      <p>Sign in only when you need protected cloud execution, saved projects, user memory, audit logs, integrations, or team features.</p>
+      <h2>1. Install Matrixs</h2>
+      <pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</code></pre>
+      <h2>2. Generate a one-time connection command</h2>
+      <p>Open <a href="/api-keys">Project Connection</a>, choose a project, and generate a command that expires after 15 minutes and works once.</p>
+      <h2>3. Run the generated command</h2>
+      <pre><code>matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
+matrixs status
+matrixs run</code></pre>
+      <p>Matrixs discovers the Python project, shows its plan, creates a reversible backup, configures monitoring, and verifies the cloud connection.</p>
       <h2>4. View results</h2>
       <p>Open <a href="/dashboard">/dashboard</a> after signing in. Project-scoped SDK workflows appear in the SDK Workflows panel.</p>
     </article>

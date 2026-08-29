@@ -362,6 +362,65 @@ button:disabled {
   padding: 12px;
 }
 
+.project-field {
+  flex: 1;
+}
+
+.connection-hero {
+  background: linear-gradient(135deg, #ffffff 0%, #fff4eb 100%);
+}
+
+.connection-result {
+  background: #fffaf3;
+  border: 1px solid #e7cab7;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.connection-result[hidden] {
+  display: none;
+}
+
+.security-note {
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 0;
+}
+
+.connection-steps {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-top: 16px;
+}
+
+.step-number {
+  align-items: center;
+  background: #dff8f3;
+  border-radius: 50%;
+  color: #117969;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 950;
+  height: 30px;
+  justify-content: center;
+  margin-bottom: 12px;
+  width: 30px;
+}
+
+.advanced-section summary {
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.advanced-content {
+  margin-top: 18px;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
 .button-row {
   display: flex;
   flex-wrap: wrap;
@@ -417,7 +476,8 @@ th {
 @media (max-width: 850px) {
   .auth-shell,
   .install-grid,
-  .install-steps {
+  .install-steps,
+  .connection-steps {
     grid-template-columns: 1fr;
   }
 

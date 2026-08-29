@@ -6,11 +6,11 @@ import urllib.request
 from typing import Any, Dict, Optional
 
 
-class SoftwareClientError(RuntimeError):
+class MatrixsClientError(RuntimeError):
     pass
 
 
-class SoftwareClient:
+class MatrixsClient:
     def __init__(self, api_url: str, api_key: str, timeout: float = 10.0) -> None:
         self.api_url = api_url.rstrip("/")
         self.api_key = api_key
@@ -22,6 +22,7 @@ class SoftwareClient:
             method="GET",
             headers={
                 "Accept": "application/json",
+                "X-Matrixs-API-Key": self.api_key,
                 "X-Software-API-Key": self.api_key,
             },
         )
@@ -30,16 +31,16 @@ class SoftwareClient:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
-            raise SoftwareClientError(f"Software API returned {error.code}: {detail}") from error
+            raise MatrixsClientError(f"Matrixs API returned {error.code}: {detail}") from error
         except urllib.error.URLError as error:
-            raise SoftwareClientError(f"Software API is unreachable: {error}") from error
+            raise MatrixsClientError(f"Matrixs API is unreachable: {error}") from error
 
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise SoftwareClientError(f"Software API returned invalid JSON: {raw[:200]}") from error
+            raise MatrixsClientError(f"Matrixs API returned invalid JSON: {raw[:200]}") from error
         if not parsed.get("ok", False):
-            raise SoftwareClientError(f"Software API rejected request: {parsed}")
+            raise MatrixsClientError(f"Matrixs API rejected request: {parsed}")
         return parsed
 
     def post(
@@ -57,6 +58,7 @@ class SoftwareClient:
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
+                "X-Matrixs-API-Key": self.api_key,
                 "X-Software-API-Key": self.api_key,
             },
         )
@@ -65,16 +67,16 @@ class SoftwareClient:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
-            raise SoftwareClientError(f"Software API returned {error.code}: {detail}") from error
+            raise MatrixsClientError(f"Matrixs API returned {error.code}: {detail}") from error
         except urllib.error.URLError as error:
-            raise SoftwareClientError(f"Software API is unreachable: {error}") from error
+            raise MatrixsClientError(f"Matrixs API is unreachable: {error}") from error
 
         try:
             parsed = json.loads(raw)
         except json.JSONDecodeError as error:
-            raise SoftwareClientError(f"Software API returned invalid JSON: {raw[:200]}") from error
+            raise MatrixsClientError(f"Matrixs API returned invalid JSON: {raw[:200]}") from error
         if not parsed.get("ok", False) and not accept_failure:
-            raise SoftwareClientError(f"Software API rejected request: {parsed}")
+            raise MatrixsClientError(f"Matrixs API rejected request: {parsed}")
         return parsed
 
     def start_workflow(self, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -126,3 +128,8 @@ class SoftwareClient:
     def ingest_framework(self, framework: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         safe_framework = framework.strip().lower().replace("_", "-")
         return self.post(f"/api/sdk/v2/adapters/{safe_framework}", payload)
+
+
+# Backward-compatible public aliases for existing SDK consumers.
+SoftwareClientError = MatrixsClientError
+SoftwareClient = MatrixsClient

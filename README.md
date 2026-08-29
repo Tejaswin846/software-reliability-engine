@@ -248,25 +248,22 @@ AI agents often work in demos and simulations, then fail in real execution becau
 - bad planning
 - missing recovery paths
 
-Software gives developers the reliability layer around those agents.
+Matrixs gives developers the reliability layer around those agents.
 
 ## Quick Start
 
-Install the SDK without signing in:
+Install Matrixs:
 
 ```bash
-pip install software-sdk
+pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
-Optional cloud login is only needed for protected cloud features:
+Generate a one-time connection command at `/api-keys`, then run it beside the Python project:
 
 ```bash
-software login
-# or
-SOFTWARE_API_KEY=sw_your_key
-software init
-software test
-software status
+matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
+matrixs status
+matrixs run
 ```
 
 For local development from this repo:
@@ -291,38 +288,38 @@ http://127.0.0.1:8300
 
 Then:
 
-1. Install the SDK with `pip install software-sdk`
+1. Install Matrixs from GitHub
 2. Use local validation, local plans, dry-run examples, and sandbox workflows without signing in
 3. Create an account at `/register` only when you need cloud features
 4. Create a project at `/projects`
-5. Generate an API key at `/api-keys`
-6. Run `software init`
-7. Run `software test`
+5. Generate a one-time connection command at `/api-keys`
+6. Run the generated `matrixs connect` command beside the project
+7. Let Matrixs verify the connection automatically
 8. Open `/dashboard`
 
 Example:
 
 ```bash
-software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent
-software init
-software test
+matrixs connect --token mxct_... --api-url http://127.0.0.1:8300
+matrixs status
+matrixs run
 ```
 
 Track SDK installation analytics:
 
 ```bash
-python -m software_sdk status
+matrixs status
 ```
 
 ## Basic SDK Usage
 
 ```python
-from software_sdk import ReliabilityMonitor
+from matrixs import ReliabilityMonitor
 
 monitor = ReliabilityMonitor(
     project_name="my-agent",
-    api_url="https://YOUR_SOFTWARE_URL",
-    api_key="sw_..."
+    api_url="https://YOUR_MATRIXS_URL",
+    api_key="mx_..."
 )
 
 with monitor.track_workflow("research-task") as workflow:

@@ -51,13 +51,12 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertEqual(install.status_code, 200)
         self.assertEqual(sdk.status_code, 200)
         self.assertEqual(docs.status_code, 200)
-        self.assertIn("pip install software-sdk", install.text)
-        self.assertIn("npm install software-sdk", install.text)
-        self.assertIn("Sign in to get API key", install.text)
-        self.assertIn("Show my API key", install.text)
-        self.assertNotIn("Project Connection", install.text)
-        self.assertIn("pip install software-sdk", docs.json()["install"]["python"])
-        self.assertIn("npm install software-sdk", docs.json()["install"]["node"])
+        self.assertIn("pip install git+https://github.com/Tejaswin846/software-reliability-engine.git", install.text)
+        self.assertIn("Project Connection", install.text)
+        self.assertIn("Open Project Connection", install.text)
+        self.assertNotIn("Show my API key", install.text)
+        self.assertIn("pip install git+https://github.com/Tejaswin846/software-reliability-engine.git", docs.json()["install"]["python"])
+        self.assertIn("supports Python 3.10+", docs.json()["install"]["node"])
         self.assertFalse(docs.json()["auth_required_for_install"])
 
     def test_public_pages_expose_working_clerk_buttons(self):
@@ -119,9 +118,9 @@ class ClerkPublicSDKTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertTrue(payload["api_key"].startswith("sw_"))
+        self.assertTrue(payload["api_key"].startswith("mx_"))
         self.assertEqual(payload["project"]["name"], "simple-agent")
-        self.assertIn("software login --api-url", payload["commands"]["login"])
+        self.assertIn("matrixs connect --api-url", payload["commands"]["login"])
         self.assertIn(payload["api_key"], payload["commands"]["login"])
         with app.connect() as db:
             project = db.execute(
@@ -237,7 +236,7 @@ class ClerkPublicSDKTests(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["api_key"].startswith("sw_"))
+        self.assertTrue(response.json()["api_key"].startswith("mx_"))
         clerk_get.assert_called_once()
         with app.connect() as db:
             row = db.execute(

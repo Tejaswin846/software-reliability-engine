@@ -3,22 +3,23 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "software-sdk"
+name = "matrixs"
 version = "0.4.1"
-description = "Python SDK for Software AI-agent reliability monitoring."
+description = "Matrixs zero-code integration and AI-agent reliability monitoring SDK."
 requires-python = ">=3.10"
 readme = "SDK_INTEGRATION_GUIDE.md"
 authors = [
-  { name = "Software Reliability Engine" }
+  { name = "Matrixs" }
 ]
 dependencies = []
 
 [project.scripts]
+matrixs = "matrixs.cli:main"
 software = "software_sdk.cli:main"
 
 [project.urls]
-Homepage = "https://software-platform.onrender.com"
-Documentation = "https://software-platform.onrender.com/developer-docs"
+Homepage = "https://software-reliability-engine.onrender.com"
+Documentation = "https://software-reliability-engine.onrender.com/developer-docs"
 
 [tool.setuptools.packages.find]
-include = ["software_sdk*"]
+include = ["matrixs*", "software_sdk*"]

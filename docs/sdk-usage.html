@@ -1,15 +1,3 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SDK Usage - Software Docs</title><link rel="stylesheet" href="/docs.css"></head><body><header class="topbar"><a class="brand" href="/developer-docs">Software Docs</a><nav class="nav"><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header><main class="layout"><aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/api-keys">API Keys</a><a href="/docs/guardrails-guide">Guardrails</a></aside><article class="doc"><h1>SDK Usage</h1><p>The Python SDK sends workflow telemetry to Software using standard HTTP requests.</p><h2>Basic workflow</h2><pre><code>from software_sdk import ReliabilityMonitor
-
-monitor = ReliabilityMonitor(
-    project_name="my-agent",
-    api_url="https://YOUR_SOFTWARE_URL",
-    api_key="sw_..."
-)
-
-with monitor.track_workflow("research-task") as workflow:
-    workflow.track_stage("search", status="completed", success=True, latency_ms=1200, confidence=0.94)
-    workflow.log_tool_call("parallel_search", success=True, latency_ms=1200, result_count=5)
-    workflow.log_model_call("llama3.2:3b", success=True, latency_ms=5000, confidence=0.91)
-    prediction = workflow.predict_failure()
-    guardrail = workflow.apply_guardrail()
-    workflow.complete(success=True, confidence=0.91)</code></pre><h2>Methods</h2><ul><li><code>track_workflow()</code>: starts a workflow context.</li><li><code>track_stage()</code>: records stage status, latency, confidence.</li><li><code>log_tool_call()</code>: records tool name, success, latency, result count.</li><li><code>log_model_call()</code>: records model name, success, latency, confidence.</li><li><code>log_error()</code>: records an error or fatal failure.</li><li><code>predict_failure()</code>: requests failure probability.</li><li><code>apply_guardrail()</code>: returns the recommended action.</li><li><code>complete()</code>: marks workflow success or failure.</li></ul></article></main></body></html>
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Connector Usage - Matrixs Docs</title><link rel="stylesheet" href="/docs.css"></head><body><header class="topbar"><a class="brand" href="/developer-docs">Matrixs Docs</a><nav class="nav"><a href="/docs/quick-start">Quick Start</a><a href="/docs/api-reference">API Reference</a></nav></header><main class="layout"><aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/api-keys">Project Connection</a><a href="/docs/guardrails-guide">Guardrails</a></aside><article class="doc"><h1>Matrixs Connector</h1><p>The connector configures supported Python projects without requiring source-code instrumentation.</p><h2>Connect</h2><pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
+matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com</code></pre><h2>Run</h2><pre><code>matrixs status
+matrixs run</code></pre><h2>What Matrixs does</h2><ul><li>Discovers supported Python projects.</li><li>Shows the exact integration plan and asks permission.</li><li>Backs up every changed path.</li><li>Stores credentials outside source code.</li><li>Verifies the connection with a real workflow.</li><li>Rolls back automatically if verification fails.</li></ul></article></main></body></html>

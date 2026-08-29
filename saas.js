@@ -187,7 +187,7 @@ async function loadProjects() {
                 <p class="muted">${project.workflow_count || 0} workflows - ${project.api_key_count || 0} active keys</p>
               </div>
               <div class="nav">
-                <a class="button secondary" href="/api-keys?project=${encodeURIComponent(project.id)}">API Keys</a>
+                <a class="button secondary" href="/api-keys?project=${encodeURIComponent(project.id)}">Connect</a>
                 <button class="danger" data-delete-project="${escapeHtml(project.id)}">Delete</button>
               </div>
             </div>
@@ -266,10 +266,41 @@ async function loadApiKeys() {
 function initApiKeys() {
   const select = document.getElementById("project-select");
   const createButton = document.getElementById("create-key-button");
-  if (!select || !createButton) {
+  const connectionButton = document.getElementById("create-connection-command");
+  if (!select || !createButton || !connectionButton) {
     return;
   }
-  select.addEventListener("change", loadApiKeys);
+  select.addEventListener("change", async () => {
+    const result = document.getElementById("connection-result");
+    if (result) {
+      result.hidden = true;
+    }
+    await loadApiKeys();
+  });
+  connectionButton.addEventListener("click", async () => {
+    if (!select.value) {
+      showMessage("connection-message", "Create a project first.", "error");
+      return;
+    }
+    try {
+      connectionButton.disabled = true;
+      connectionButton.textContent = "Creating secure command...";
+      const response = await api(`/api/projects/${select.value}/connection-token`, {
+        method: "POST",
+        body: "{}",
+      });
+      document.getElementById("connection-command").textContent = response.connection.command;
+      document.getElementById("connection-expiry").textContent =
+        `Expires ${new Date(response.connection.expires_at).toLocaleString()} and works once.`;
+      document.getElementById("connection-result").hidden = false;
+      showMessage("connection-message", "One-time Matrixs connection command created.", "success");
+    } catch (error) {
+      showMessage("connection-message", error.message, "error");
+    } finally {
+      connectionButton.disabled = false;
+      connectionButton.textContent = "Generate connection command";
+    }
+  });
   createButton.addEventListener("click", async () => {
     if (!select.value) {
       showMessage("api-key-message", "Create a project first.", "error");
@@ -281,13 +312,27 @@ function initApiKeys() {
         body: "{}",
       });
       document.getElementById("new-api-key").textContent = response.api_key;
-      showMessage("api-key-message", "API key created. Copy it now.", "success");
+      showMessage("api-key-message", "Permanent API key created. Copy it now, then keep it secret.", "success");
       await loadApiKeys();
     } catch (error) {
       showMessage("api-key-message", error.message, "error");
     }
   });
   document.addEventListener("click", async (event) => {
+    const copyButton = event.target.closest('[data-copy-target="connection-command"]');
+    if (copyButton) {
+      const command = document.getElementById("connection-command")?.textContent.trim();
+      if (!command) {
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(command);
+        showMessage("connection-message", "Connection command copied.", "success");
+      } catch (_) {
+        showMessage("connection-message", "Select and copy the command shown below.", "success");
+      }
+      return;
+    }
     const button = event.target.closest("[data-delete-key]");
     if (!button) {
       return;
@@ -305,7 +350,7 @@ function initApiKeys() {
 
 function installCommandText(kind) {
   if (kind === "pypi") {
-    return "pip install software-sdk";
+    return "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git";
   }
   if (kind === "github") {
     return "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git";
@@ -329,26 +374,10 @@ function selectedInstallProject() {
 }
 
 function updateInstallCommands() {
-  const apiUrlInput = document.getElementById("install-api-url");
-  const apiKeyInput = document.getElementById("install-api-key");
-  const projectNameInput = document.getElementById("install-project-name");
-  const apiUrl = (apiUrlInput?.value || window.location.origin).replace(/\/+$/, "");
-  const apiKey = apiKeyInput?.value || "sw_your_key";
-  const project = selectedInstallProject();
-  const projectName = projectNameInput?.value || project?.name || "my-agent";
-  const setup = [
-    "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
-    `software login --api-url ${apiUrl} --api-key ${apiKey} --project-name ${projectName}`,
-    "software init",
-    "software test",
-    "software status",
-  ].join("\n");
-
   const fields = {
     "install-command-pypi": installCommandText("pypi"),
     "install-command-github": installCommandText("github"),
     "install-command-local": installCommandText("local"),
-    "install-command-setup": setup,
   };
   Object.entries(fields).forEach(([id, value]) => {
     const element = document.getElementById(id);
@@ -377,36 +406,16 @@ async function loadInstallProjects() {
   if (!select) {
     return;
   }
-  let response;
-  try {
-    response = await api("/api/projects");
-  } catch (error) {
-    if (error.status === 401) {
-      select.innerHTML = `<option value="">Sign in to select a project</option>`;
-      const projectNameLabel = document.getElementById("install-project-name-label");
-      if (projectNameLabel) {
-        projectNameLabel.textContent = "Sign in for cloud setup";
-      }
-      updateInstallCommands();
-      showMessage("install-message", "SDK install commands are public. Sign in only to generate API keys or test cloud ingestion.", "success");
-      return;
-    }
-    throw error;
-  }
+  const response = await api("/api/projects");
   select.innerHTML = response.projects.length
     ? response.projects.map((project) => (
       `<option value="${escapeHtml(project.id)}" data-project-name="${escapeHtml(project.name)}">${escapeHtml(project.name)}</option>`
     )).join("")
     : `<option value="">Create a project first</option>`;
 
-  const selected = selectedInstallProject();
-  const projectNameInput = document.getElementById("install-project-name");
-  const projectNameLabel = document.getElementById("install-project-name-label");
-  if (projectNameInput && selected) {
-    projectNameInput.value = selected.name;
-  }
-  if (projectNameLabel) {
-    projectNameLabel.textContent = selected ? selected.name : "No project selected";
+  const result = document.getElementById("install-connection-result");
+  if (result) {
+    result.hidden = true;
   }
   updateInstallCommands();
 }
@@ -417,6 +426,16 @@ function initInstallPage() {
     return;
   }
 
+  const projectSelect = document.getElementById("install-project-select");
+  if (projectSelect) {
+    projectSelect.addEventListener("change", () => {
+      const result = document.getElementById("install-connection-result");
+      if (result) {
+        result.hidden = true;
+      }
+    });
+  }
+
   document.addEventListener("click", async (event) => {
     const copyButton = event.target.closest("[data-copy-target]");
     if (copyButton) {
@@ -424,48 +443,41 @@ function initInstallPage() {
       return;
     }
 
-    const generateButton = event.target.closest("#simple-api-key-button");
+    const generateButton = event.target.closest("#generate-install-connection");
     if (generateButton) {
-      const projectName = document.getElementById("simple-project-name")?.value.trim() || "my-agent";
-      const result = document.getElementById("simple-api-key-result");
-      const apiKey = document.getElementById("simple-api-key");
-      const loginCommand = document.getElementById("simple-login-command");
+      const project = selectedInstallProject();
+      if (!project) {
+        showMessage("install-message", "Create a project before generating a connection command.", "error");
+        return;
+      }
       try {
         generateButton.disabled = true;
-        generateButton.textContent = "Creating key...";
-        if (result) {
-          result.hidden = true;
-        }
-        if (apiKey) {
-          apiKey.textContent = "";
-        }
-        if (loginCommand) {
-          loginCommand.textContent = "";
-        }
-        const response = await api("/api/install/api-key", {
+        generateButton.textContent = "Creating secure command...";
+        const response = await api(`/api/projects/${project.id}/connection-token`, {
           method: "POST",
-          body: JSON.stringify({ project_name: projectName }),
+          body: "{}",
         });
-        sessionStorage.setItem("software_install_api_key", response.api_key);
-        if (apiKey) {
-          apiKey.textContent = response.api_key;
-        }
-        if (loginCommand) {
-          loginCommand.textContent = response.commands?.login || "";
-        }
-        if (result) {
-          result.hidden = false;
-          result.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-        showMessage("install-message", "API key ready. Copy it now and paste it into your app or CLI.", "success");
+        const setup = [
+          installCommandText("github"),
+          response.connection.command,
+          "matrixs status",
+          "matrixs run",
+        ].join("\n");
+        document.getElementById("install-command-setup").textContent = setup;
+        document.getElementById("install-connection-expiry").textContent =
+          `Expires ${new Date(response.connection.expires_at).toLocaleString()} and works once.`;
+        document.getElementById("install-connection-result").hidden = false;
+        showMessage("install-message", "One-time Matrixs connection command created.", "success");
       } catch (error) {
         showMessage("install-message", error.message, "error");
       } finally {
         generateButton.disabled = false;
-        generateButton.textContent = "Show my API key";
+        generateButton.textContent = "Generate connection command";
       }
+      return;
     }
   });
+
 }
 
 document.addEventListener("DOMContentLoaded", async () => {

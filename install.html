@@ -3,86 +3,94 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Install the Matrixs SDK</title>
-    <link rel="stylesheet" href="/saas.css?v=20260808c">
+    <title>Install Matrixs</title>
+    <link rel="stylesheet" href="/saas.css?v=20260830a">
     <link rel="stylesheet" href="/ui.css?v=20260808c">
     <script src="/ui.js?v=20260808c" defer></script>
   </head>
   <body data-matrixs-page="reliability">
     <header class="topbar">
-      <a class="brand" href="/"><span class="brand-mark">S</span><strong>Software+</strong></a>
+      <div class="brand">
+        <span>Matrixs</span>
+        <strong>Zero-Code Connector</strong>
+      </div>
       <nav class="nav">
-        <a href="/developer-docs">Docs</a>
         <a href="/dashboard">Dashboard</a>
-        <button type="button" class="secondary" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/install">Sign in</button>
+        <a href="/projects">Projects</a>
+        <a href="/api-keys">Project Connection</a>
+        <button type="button" class="secondary" data-clerk-sign-in data-auth-signed-out data-auth-redirect="/api-keys">Sign in</button>
         <button type="button" class="secondary" data-clerk-user-profile data-auth-signed-in>Account</button>
-        <button type="button" class="secondary" data-clerk-sign-out data-auth-signed-in>Logout</button>
       </nav>
     </header>
 
-    <main id="install-sdk-page" class="auth-shell simple-install">
-      <section class="auth-copy">
-        <p class="eyebrow">Install first</p>
-        <h1>Install the SDK, then add your <span class="accent-text">API key</span></h1>
-        <p class="muted">No account is needed to install. Sign in only after install when you want cloud workflow tracking.</p>
-        <div class="auth-preview">
-          <div class="auth-preview-row"><span>01</span><strong>Click install</strong><span class="muted">public</span></div>
-          <div class="auth-preview-row"><span>02</span><strong>Sign in</strong><span class="muted">Clerk</span></div>
-          <div class="auth-preview-row"><span>03</span><strong>Copy API key</strong><span class="muted">paste once</span></div>
+    <main id="install-sdk-page" class="shell stack">
+      <section class="panel stack">
+        <div class="row">
+          <div>
+            <h1>Connect a project to Matrixs</h1>
+            <p class="muted">Choose the Matrixs Cloud project, generate one short-lived command, and run it beside your Python project. No source-code paste or permanent API-key copy is required.</p>
+          </div>
+          <a class="button secondary" href="/dashboard">View Dashboard</a>
+        </div>
+        <div id="install-message" class="message"></div>
+      </section>
+
+      <section class="panel stack">
+        <div class="row">
+          <div>
+            <h2>Project Connection</h2>
+            <p class="muted">The generated command expires after 15 minutes and can be used only once.</p>
+          </div>
+          <a class="button" href="/api-keys">Open Project Connection</a>
+        </div>
+        <p class="security-note">After signing in, select a project and generate a one-time command. Matrixs exchanges the temporary token locally, creates a reversible backup, and verifies the connection without displaying a permanent API key.</p>
+      </section>
+
+      <section class="panel stack">
+        <h2>Install Commands</h2>
+        <div class="install-command-list">
+          <article class="card stack">
+            <div class="row">
+              <h2>Current GitHub install</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-github">Copy GitHub install command</button>
+            </div>
+            <pre id="install-command-github" class="code-snippet">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
+          </article>
+
+          <article class="card stack">
+            <div class="row">
+              <h2>Local/dev install</h2>
+              <button type="button" class="secondary" data-copy-target="install-command-local">Copy local install command</button>
+            </div>
+            <pre id="install-command-local" class="code-snippet">pip install -e .</pre>
+          </article>
+
         </div>
       </section>
 
-      <section class="auth-card stack">
-        <div>
-          <p class="eyebrow">Step 1</p>
-          <h2>Install Matrixs</h2>
-          <p class="muted">Run one command in your terminal.</p>
-        </div>
-        <pre id="install-command-main" class="code-snippet">pip install software-sdk</pre>
+      <section class="panel stack">
+        <h2>Download Installers</h2>
+        <p class="muted">Download a script, inspect it, then run it locally. The browser will not install anything silently.</p>
         <div class="button-row">
-          <button id="copy-simple-install" type="button" data-copy-target="install-command-main">Copy install command</button>
-          <a class="button secondary" href="/install_software_sdk.ps1" download>Download installer</a>
+          <a class="button" href="/install_matrixs.bat" download>Download Windows installer</a>
+          <a class="button secondary" href="/install_matrixs.ps1" download>Download PowerShell installer</a>
         </div>
-        <details>
-          <summary>npm instead</summary>
-          <pre id="install-command-npm" class="code-snippet">npm install software-sdk</pre>
-          <button type="button" class="secondary" data-copy-target="install-command-npm">Copy npm command</button>
-        </details>
+      </section>
 
-        <div class="simple-divider"></div>
-
-        <div>
-          <p class="eyebrow">Step 2</p>
-          <h2>Get your API key</h2>
-          <p class="muted">After signing in, click once. Matrixs creates a project and shows a key to paste into your app.</p>
+      <section class="panel stack">
+        <h2>Step-by-step setup</h2>
+        <div class="install-steps">
+          <article class="card"><h2>1. Install Matrixs</h2><p class="muted">Install the Python package once.</p></article>
+          <article class="card"><h2>2. Run matrixs connect</h2><p class="muted">Matrixs discovers the Python project and asks for permission.</p></article>
+          <article class="card"><h2>3. Authorize once</h2><p class="muted">The short-lived token is exchanged automatically; no permanent API key is copied.</p></article>
+          <article class="card"><h2>4. Review changes</h2><p class="muted">Matrixs shows its plan and creates a reversible backup.</p></article>
+          <article class="card"><h2>5. Verify connection</h2><p class="muted">Matrixs sends a real test event and rolls back automatically if integration fails.</p></article>
+          <article class="card"><h2>6. Run with Matrixs</h2><p class="muted">Use <code>matrixs run</code>; no source-code paste is required.</p></article>
         </div>
-        <div class="button-row" data-auth-signed-out>
-          <button type="button" data-clerk-sign-in data-auth-redirect="/install">Sign in to get API key</button>
-        </div>
-        <div class="stack" data-auth-signed-in>
-          <label>
-            Project name
-            <input id="simple-project-name" type="text" value="my-agent" autocomplete="off">
-          </label>
-          <button id="simple-api-key-button" type="button">Show my API key</button>
-          <p class="muted">Creating a new key replaces your previous active key for this account.</p>
-        </div>
-
-        <section id="simple-api-key-result" class="simple-result stack" hidden>
-          <p class="muted">Copy this now. For security, full API keys are shown once.</p>
-          <pre id="simple-api-key" class="code-snippet"></pre>
-          <button type="button" class="secondary" data-copy-target="simple-api-key">Copy API key</button>
-          <h3>Paste-ready command</h3>
-          <pre id="simple-login-command" class="code-snippet"></pre>
-          <button type="button" class="secondary" data-copy-target="simple-login-command">Copy setup command</button>
-          <p class="muted">Then run <code>software test</code> and open the dashboard.</p>
-        </section>
-
-        <div id="install-message" class="message"></div>
       </section>
     </main>
 
     <script src="/auth.js"></script>
-    <script src="/saas.js"></script>
+    <script src="/saas.js?v=20260830a"></script>
   </body>
 </html>

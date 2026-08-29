@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS api_keys (
     is_active INTEGER NOT NULL DEFAULT 1
 );
 
+CREATE TABLE IF NOT EXISTS project_connection_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    token_prefix TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
 CREATE TABLE IF NOT EXISTS plans (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -294,6 +307,12 @@ CREATE INDEX IF NOT EXISTS idx_invitations_email_status
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_project_active
     ON api_keys(project_id, is_active);
+
+CREATE INDEX IF NOT EXISTS idx_project_connection_tokens_project
+    ON project_connection_tokens(project_id, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_project_connection_tokens_expiry
+    ON project_connection_tokens(expires_at, used_at);
 
 CREATE INDEX IF NOT EXISTS idx_subscriptions_user_status
     ON subscriptions(user_id, status);

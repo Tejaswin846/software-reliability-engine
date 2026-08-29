@@ -1,16 +1,15 @@
-# Software Quick Start
+# Matrixs Quick Start
 
-## 1. Install Publicly
+## 1. Install Matrixs
 
 ```bash
-pip install software-sdk
-npm install software-sdk
+pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
 No sign-in is required for install, docs, local validation, local plans, dry-run
 examples, or sandbox workflow tests.
 
-## 2. Start Software Locally
+## 2. Start Matrixs Locally
 
 ```bash
 pip install -r requirements.txt
@@ -23,16 +22,15 @@ Open:
 http://127.0.0.1:8300
 ```
 
-## 3. Use Cloud Features When Needed
+## 3. Connect a Cloud Project
 
-Sign in with Clerk only when you need saved projects, cloud execution, user
-memory, audit logs, integrations, API keys, or team features.
+Create or select a project at `/projects`, open `/api-keys`, and generate a
+single-use connection command. Run it beside the Python project within 15 minutes.
 
 ```bash
-software login --api-url http://127.0.0.1:8300 --api-key sw_your_key --project-name my-agent-dev
-software init
-software test
-software status
+matrixs connect --token mxct_... --api-url http://127.0.0.1:8300
+matrixs status
+matrixs run
 ```
 
 ## 4. View Dashboard
@@ -50,11 +48,11 @@ telemetry.
 
 `403 Invalid SDK API key`
 
-Generate a new API key at `/api-keys` and update `SOFTWARE_API_KEY`.
+Generate a new one-time command at `/api-keys` and reconnect the project.
 
 `Workflow not visible`
 
-Confirm you are viewing the same Software URL used by `SOFTWARE_API_URL`.
+Confirm you are viewing the same Matrixs URL stored in `.matrixs/config.json`.
 
 `401 Authentication required`
 

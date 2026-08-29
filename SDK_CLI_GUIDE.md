@@ -1,14 +1,12 @@
-# Software SDK CLI Guide
+# Matrixs Zero-Code Connector Guide
 
-The `software` CLI connects external AI-agent projects to the Software
-reliability dashboard. Installing the SDK is public; protected cloud APIs need
-Clerk login or a project API key.
+The `matrixs` CLI connects Python AI-agent projects to the Matrixs reliability
+dashboard without requiring source-code instrumentation or a copied permanent API key.
 
 ## Install
 
 ```bash
-pip install software-sdk
-npm install software-sdk
+pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
 Local repo development:
@@ -17,44 +15,46 @@ Local repo development:
 pip install -e .
 ```
 
-## Public/Local Mode
+## Generate a One-Time Command
 
-No login is required for local validation, local plan creation, dry-run
-examples, sandbox workflows, docs, or downloads.
+Create or select a cloud project, open `/api-keys`, and choose **Generate
+connection command**. The token expires after 15 minutes and works once.
 
-## Optional Cloud Login
+## Connect
 
-`software login` saves your Software API URL, API key, and default project name.
-
-```bash
-software login
-```
-
-Non-interactive:
+Run the generated command beside the Python project:
 
 ```bash
-software login \
-  --api-url https://software-reliability-engine.onrender.com \
-  --api-key sw_... \
-  --project-name my-agent
+matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com
 ```
 
-The CLI also supports:
-
-```text
-SOFTWARE_API_URL
-SOFTWARE_API_KEY
-SOFTWARE_PROJECT_NAME
-```
+Matrixs discovers supported projects, shows the exact plan, asks permission,
+creates a timestamped backup, writes reversible configuration, exchanges the
+token for a local project credential, and sends a real verification workflow.
 
 ## Commands
 
-`software init` creates `software.config.json`.
+```bash
+matrixs status
+matrixs run
+matrixs test
+matrixs undo
+matrixs disconnect
+```
 
-`software test` sends a complete cloud test workflow when an API key is
-configured.
+Use `matrixs status --offline` for a local-only check. Use `matrixs connect
+--dry-run` to inspect the plan without changing the project.
 
-`software status` checks API connectivity, project binding, and dashboard URL.
+## Files and Safety
 
-Protected API calls without credentials return a clear message that local SDK
-use remains available without signing in.
+```text
+.matrixs/config.json       non-secret connection and startup configuration
+.matrixs/.env              Git-ignored project credential
+.matrixs/runtime/          Matrixs-owned runtime bootstrap
+.matrixs/backups/          timestamped reversible backups
+```
+
+Matrixs does not edit ordinary application source files. It refuses unsafe
+symbolic-link targets, backs up every changed path, hides secrets from plans
+and status output, and automatically restores the current backup if connection
+verification fails. The former `software` command remains a compatibility alias.

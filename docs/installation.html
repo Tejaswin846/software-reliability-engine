@@ -12,15 +12,12 @@
     <aside class="sidebar"><a href="/developer-docs">Docs Home</a><a href="/docs/authentication">Authentication</a><a href="/docs/troubleshooting">Troubleshooting</a></aside>
     <article class="doc">
       <h1>Installation</h1>
-      <h2>Install without login</h2>
-      <pre><code>pip install software-sdk
-npm install software-sdk</code></pre>
-      <p>The SDK install, docs, local validation, local planning, dry-run examples, and sandbox workflows are public.</p>
-      <h2>Optional cloud login</h2>
-      <pre><code>software login
-# or
-SOFTWARE_API_KEY=sw_your_key</code></pre>
-      <p>Cloud workflow execution, saved projects, user memory, audit logs, external app integrations, and team features require Clerk login or an API key.</p>
+      <h2>Install Matrixs</h2>
+      <pre><code>pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</code></pre>
+      <p>The package includes the <code>matrixs</code> connector and the reliability runtime.</p>
+      <h2>Connect without copying an API key</h2>
+      <pre><code>matrixs connect --token mxct_... --api-url https://software-reliability-engine.onrender.com</code></pre>
+      <p>Generate this single-use command from <a href="/api-keys">Project Connection</a>. Matrixs stores the exchanged credential locally and never displays it in the standard flow.</p>
       <h2>Develop from this repository</h2>
       <pre><code>python -m pip install --upgrade pip
 pip install -e .</code></pre>

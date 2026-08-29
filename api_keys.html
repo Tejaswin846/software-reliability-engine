@@ -3,14 +3,14 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>API keys | Matrixs Reliability</title>
-    <link rel="stylesheet" href="/saas.css?v=20260808c">
+    <title>Connect a Project - Matrixs</title>
+    <link rel="stylesheet" href="/saas.css?v=20260830a">
     <link rel="stylesheet" href="/ui.css?v=20260808c">
     <script src="/ui.js?v=20260808c" defer></script>
   </head>
   <body data-requires-auth="true" data-matrixs-page="reliability">
     <header class="topbar">
-      <p class="brand"><span>Software</span><strong>API Keys</strong></p>
+      <p class="brand"><span>Matrixs</span><strong>Project Connection</strong></p>
       <nav class="nav">
         <span id="user-label" class="muted">--</span>
         <a href="/projects">Projects</a>
@@ -19,32 +19,60 @@
       </nav>
     </header>
     <main class="shell stack">
-      <section class="panel stack">
-        <h1>Project API Keys</h1>
-        <p class="muted">API keys are shown once. Store them in your agent environment variables.</p>
-        <div class="row">
-          <label style="flex: 1">Project <select id="project-select"></select></label>
-          <button id="create-key-button" type="button">Create API Key</button>
+      <section class="panel stack connection-hero">
+        <div>
+          <p class="eyebrow">Zero-code integration</p>
+          <h1>Connect a project with one command.</h1>
+          <p class="muted">Matrixs creates a short-lived, single-use command. Run it beside your Python project; Matrixs discovers the application, asks permission, creates a backup, configures monitoring, and verifies the connection.</p>
         </div>
-        <div id="api-key-message" class="message"></div>
-        <div id="new-api-key" class="key-box">New API keys will appear here once.</div>
+        <div class="row">
+          <label class="project-field">Project <select id="project-select"></select></label>
+          <button id="create-connection-command" type="button">Generate connection command</button>
+        </div>
+        <div id="connection-message" class="message"></div>
+        <section id="connection-result" class="connection-result stack" hidden>
+          <div class="row">
+            <div>
+              <h2>Run this in your terminal</h2>
+              <p id="connection-expiry" class="muted">This command expires in 15 minutes and works once.</p>
+            </div>
+            <button type="button" class="secondary" data-copy-target="connection-command">Copy command</button>
+          </div>
+          <pre id="connection-command" class="code-snippet"></pre>
+          <p class="security-note">The temporary token is exchanged for project credentials by the Matrixs CLI. Permanent API keys are not shown in this connection flow.</p>
+        </section>
       </section>
+
       <section class="panel">
-        <table>
-          <thead>
-            <tr>
-              <th>Prefix</th>
-              <th>Status</th>
-              <th>Created</th>
-              <th>Last Used</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="api-key-table"></tbody>
-        </table>
+        <h2>What happens after you run it</h2>
+        <div class="connection-steps">
+          <article class="card"><span class="step-number">1</span><h2>Discover</h2><p class="muted">Matrixs finds supported Python projects and lets you choose the correct one.</p></article>
+          <article class="card"><span class="step-number">2</span><h2>Review &amp; back up</h2><p class="muted">You approve the exact plan before Matrixs writes reversible configuration.</p></article>
+          <article class="card"><span class="step-number">3</span><h2>Verify</h2><p class="muted">A real test event confirms the project appears in the Reliability dashboard.</p></article>
+        </div>
       </section>
+
+      <details class="panel advanced-section">
+        <summary>Advanced: manage permanent API keys</summary>
+        <div class="stack advanced-content">
+          <p class="muted">Use permanent keys only for custom or manual integrations. The standard Matrixs connection method above does not require copying one.</p>
+          <div class="row">
+            <button id="create-key-button" type="button" class="secondary">Create permanent API key</button>
+          </div>
+          <div id="api-key-message" class="message"></div>
+          <div id="new-api-key" class="key-box">A newly created permanent key will appear here once.</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>Prefix</th><th>Status</th><th>Created</th><th>Last Used</th><th></th></tr>
+              </thead>
+              <tbody id="api-key-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </details>
     </main>
     <script src="/auth.js"></script>
-    <script src="/saas.js"></script>
+    <script src="/saas.js?v=20260830a"></script>
   </body>
 </html>
