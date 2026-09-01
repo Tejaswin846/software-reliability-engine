@@ -73,6 +73,29 @@ class MatrixsConnectionTokenTests(unittest.TestCase):
         self.assertEqual(status.status_code, 200)
         self.assertEqual(status.json()["project"]["id"], "prj_dev_local")
 
+        installation_payload = {
+            "installation_id": payload["installation"]["id"],
+            "device_label": "Test workstation",
+            "operating_system": "Windows",
+            "runtime": "Python 3.12",
+            "environment": "test",
+            "metadata": {"source": "connector_test"},
+        }
+        registered = self.client.post(
+            "/api/sdk/installations/register",
+            headers={"X-Matrixs-API-Key": payload["api_key"]},
+            json=installation_payload,
+        )
+        self.assertEqual(registered.status_code, 200, registered.text)
+        self.assertEqual(registered.json()["installation"]["state"], "connected")
+        disconnected = self.client.post(
+            "/api/sdk/installations/disconnect",
+            headers={"X-Matrixs-API-Key": payload["api_key"]},
+            json=installation_payload,
+        )
+        self.assertEqual(disconnected.status_code, 200, disconnected.text)
+        self.assertEqual(disconnected.json()["installation"]["state"], "disconnected")
+
         reused = self.client.post(
             "/api/sdk/connect/exchange",
             json={"token": connection["token"]},
@@ -113,8 +136,13 @@ class MatrixsConnectionTokenTests(unittest.TestCase):
             installation_id="inst_cloud",
         )
         with patch("matrixs.connector.verify.MatrixsClient") as client_class:
+            client_class.return_value.get.return_value = {
+                "ok": True,
+                "service": "Matrixs",
+            }
             client_class.return_value.status.return_value = {
-                "project": {"id": "prj_cloud"}
+                "project": {"id": "prj_cloud"},
+                "api_key": {"id": "key_cloud"},
             }
             client_class.return_value.post.return_value = {"workflow_id": "wf_test"}
             verify_connection(credentials)

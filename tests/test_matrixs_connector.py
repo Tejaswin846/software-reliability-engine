@@ -2,23 +2,33 @@ from __future__ import annotations
 
 import json
 import io
+import os
 import tempfile
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.parse import urlencode, urlsplit
 from urllib.request import Request, urlopen
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from matrixs.cli import _choose_project, _discover_or_prompt, build_parser, main
+from matrixs.cli import _choose_project, _discover_or_prompt, _terminal_symbol, build_parser, main
+from matrixs.config import (
+    ConfigError,
+    MATRIXS_LOCAL_API_URL,
+    MATRIXS_PRODUCTION_API_URL,
+    resolve_matrixs_api_url,
+)
 from matrixs.connector.backup import latest_backup, read_manifest
 from matrixs.connector.analyzer import analyze_project
 from matrixs.connector.browser_setup import collect_credentials_in_browser
 from matrixs.connector.discover import discover_projects
 from matrixs.connector.models import Credentials
 from matrixs.connector.permissions import ask_yes_no, request_integration_permission
+from matrixs.connector.verify import validate_credentials
+from matrixs.runtime.launcher import build_runtime_environment
+from matrixs.runtime import instrumentation as runtime_instrumentation
 
 
 class MatrixsConnectorTests(unittest.TestCase):
@@ -28,6 +38,157 @@ class MatrixsConnectorTests(unittest.TestCase):
             "from fastapi import FastAPI\napp = FastAPI()\n",
             encoding="utf-8",
         )
+
+    def connection_patches(self, project_id: str):
+        return (
+            patch("matrixs.cli.check_cloud_health", return_value={"ok": True, "service": "Matrixs"}),
+            patch(
+                "matrixs.cli.validate_credentials",
+                return_value={
+                    "project": {"id": project_id},
+                    "api_key": {"id": "key_test"},
+                },
+            ),
+            patch("matrixs.cli.register_installation", return_value={"ok": True}),
+            patch("matrixs.cli.send_test_event", return_value={"workflow_id": "wf_test"}),
+        )
+
+    def matrixs_environment(self, **values: str):
+        environment = {
+            "MATRIXS_API_URL": "",
+            "MATRIXS_LOCAL_API_URL": "",
+            "MATRIXS_LOCAL_DEVELOPMENT": "",
+            "MATRIXS_MODE": "",
+            "SOFTWARE_API_URL": "",
+        }
+        environment.update(values)
+        return patch.dict(os.environ, environment, clear=False)
+
+    def test_production_api_url_is_the_plain_connection_default(self) -> None:
+        self.assertEqual(resolve_matrixs_api_url(environ={}), MATRIXS_PRODUCTION_API_URL)
+        self.assertNotIn("127.0.0.1", resolve_matrixs_api_url(environ={}))
+        self.assertNotIn("localhost", resolve_matrixs_api_url(environ={}))
+        self.assertEqual(
+            resolve_matrixs_api_url("http://127.0.0.1:8000", environ={}),
+            MATRIXS_PRODUCTION_API_URL,
+        )
+        self.assertEqual(
+            resolve_matrixs_api_url(environ={"SOFTWARE_API_URL": "http://localhost:8300"}),
+            MATRIXS_PRODUCTION_API_URL,
+        )
+
+    def test_matrixs_api_url_override_and_explicit_local_mode(self) -> None:
+        override = "https://matrixs.staging.example"
+        self.assertEqual(
+            resolve_matrixs_api_url(environ={"MATRIXS_API_URL": override}),
+            override,
+        )
+        with self.assertRaises(ConfigError):
+            resolve_matrixs_api_url(environ={"MATRIXS_API_URL": "http://127.0.0.1:8000"})
+        self.assertEqual(
+            resolve_matrixs_api_url(environ={"MATRIXS_MODE": "local"}),
+            MATRIXS_LOCAL_API_URL,
+        )
+        self.assertEqual(
+            resolve_matrixs_api_url(
+                environ={
+                    "MATRIXS_MODE": "development",
+                    "MATRIXS_LOCAL_API_URL": "http://localhost:9123",
+                }
+            ),
+            "http://localhost:9123",
+        )
+
+    def test_plain_connect_honors_matrixs_api_url_environment_override(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_fastapi_project(root)
+            output = io.StringIO()
+            with self.matrixs_environment(
+                MATRIXS_API_URL="https://matrixs.staging.example"
+            ), redirect_stdout(output):
+                result = main(
+                    ["connect", "--path", str(root), "--yes", "--dry-run"]
+                )
+
+        self.assertEqual(result, 0)
+        self.assertIn("https://matrixs.staging.example", output.getvalue())
+
+    def test_plain_connect_ignores_stale_localhost_and_passes_production_to_validation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            self.make_fastapi_project(root)
+            captured = {}
+
+            def collect(*args, **kwargs):
+                captured["api_url"] = kwargs["api_url"]
+                credentials = Credentials(
+                    project_id="prj_production",
+                    api_key="mx_production",
+                    api_url=kwargs["api_url"],
+                    project_name="Production Agent",
+                    installation_id="inst_production",
+                )
+                kwargs["validator"](credentials)
+                return credentials
+
+            stale = {
+                "api_url": "http://127.0.0.1:8000",
+                "project_name": "Production Agent",
+            }
+            with ExitStack() as stack:
+                stack.enter_context(self.matrixs_environment())
+                stack.enter_context(patch("matrixs.cli.load_project_connection", return_value=stale))
+                stack.enter_context(patch("matrixs.cli.collect_credentials_in_browser", side_effect=collect))
+                for connection_patch in self.connection_patches("prj_production"):
+                    stack.enter_context(connection_patch)
+                result = main(["connect", "--path", str(root), "--yes"])
+
+            self.assertEqual(result, 0)
+            self.assertEqual(captured["api_url"], MATRIXS_PRODUCTION_API_URL)
+            saved = json.loads((root / ".matrixs" / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(saved["api_url"], MATRIXS_PRODUCTION_API_URL)
+
+    def test_credential_validation_constructs_client_for_production(self) -> None:
+        credentials = Credentials(
+            project_id="prj_render",
+            api_key="mx_render",
+            api_url=MATRIXS_PRODUCTION_API_URL,
+            project_name="Render Agent",
+            installation_id="inst_render",
+        )
+        with patch("matrixs.connector.verify.MatrixsClient") as client_class:
+            client_class.return_value.status.return_value = {
+                "project": {"id": "prj_render"},
+                "api_key": {"id": "key_render"},
+            }
+            validate_credentials(credentials)
+
+        self.assertEqual(client_class.call_args.kwargs["api_url"], MATRIXS_PRODUCTION_API_URL)
+
+    def test_runtime_telemetry_uses_the_connected_production_backend(self) -> None:
+        session = MagicMock()
+        session.__enter__.return_value = session
+        runtime_instrumentation._SESSION = None
+        with self.matrixs_environment(MATRIXS_API_URL=MATRIXS_PRODUCTION_API_URL), patch.dict(
+            os.environ,
+            {
+                "MATRIXS_API_KEY": "mx_runtime",
+                "MATRIXS_PROJECT_NAME": "Runtime Agent",
+                "MATRIXS_RUNTIME_ACTIVE": "",
+            },
+            clear=False,
+        ), patch("matrixs.runtime.instrumentation.ReliabilityMonitor") as monitor_class, patch(
+            "matrixs.runtime.instrumentation.atexit.register"
+        ):
+            monitor_class.return_value.track_workflow.return_value = session
+            self.assertTrue(runtime_instrumentation.activate_from_environment())
+
+        self.assertEqual(
+            monitor_class.call_args.kwargs["api_url"],
+            MATRIXS_PRODUCTION_API_URL,
+        )
+        runtime_instrumentation._SESSION = None
 
     def test_discovery_and_analysis_detect_supported_project(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -81,6 +242,10 @@ class MatrixsConnectorTests(unittest.TestCase):
     def test_yes_no_parser_repeats_invalid_input(self) -> None:
         answers = iter(["perhaps", "YES"])
         self.assertTrue(ask_yes_no("Continue?", input_fn=lambda _: next(answers)))
+
+    def test_progress_symbol_falls_back_on_legacy_windows_encoding(self) -> None:
+        with patch("matrixs.cli.sys.stdout", type("LegacyConsole", (), {"encoding": "cp1252"})()):
+            self.assertEqual(_terminal_symbol("\u2713", "[OK]"), "[OK]")
 
     def test_permission_no_no_returns_to_original_question(self) -> None:
         answers = iter(["n", "n", "y"])
@@ -253,7 +418,7 @@ class MatrixsConnectorTests(unittest.TestCase):
             entered = Credentials(
                 project_id="prj_test",
                 api_key="secret-test-key",
-                api_url="https://matrixs.example",
+                api_url=MATRIXS_PRODUCTION_API_URL,
                 project_name="Nexora",
                 installation_id="inst_test",
             )
@@ -262,9 +427,11 @@ class MatrixsConnectorTests(unittest.TestCase):
                 kwargs["validator"](entered)
                 return entered
 
-            with patch("matrixs.cli.collect_credentials_in_browser", side_effect=collect), patch(
-                "matrixs.cli.validate_credentials", return_value={"project": {"id": "prj_test"}}
-            ), patch("matrixs.cli.send_test_event", return_value={"workflow_id": "wf_test"}):
+            with ExitStack() as stack:
+                stack.enter_context(self.matrixs_environment())
+                stack.enter_context(patch("matrixs.cli.collect_credentials_in_browser", side_effect=collect))
+                for connection_patch in self.connection_patches("prj_test"):
+                    stack.enter_context(connection_patch)
                 result = main(["connect", "--path", str(root), "--yes"])
 
             self.assertEqual(result, 0)
@@ -277,14 +444,28 @@ class MatrixsConnectorTests(unittest.TestCase):
             config = json.loads(config_text)
             self.assertEqual(config["project_id"], "prj_test")
             self.assertEqual(config["framework"], "fastapi")
-            self.assertIn("MATRIXS_API_KEY=secret-test-key", secret_path.read_text(encoding="utf-8"))
+            self.assertEqual(config["api_url"], MATRIXS_PRODUCTION_API_URL)
+            secret_text = secret_path.read_text(encoding="utf-8")
+            self.assertIn("MATRIXS_API_KEY=secret-test-key", secret_text)
+            self.assertIn(f"MATRIXS_API_URL={MATRIXS_PRODUCTION_API_URL}", secret_text)
+            with self.matrixs_environment():
+                runtime_env = build_runtime_environment(root, base={})
+            self.assertEqual(runtime_env["MATRIXS_API_URL"], MATRIXS_PRODUCTION_API_URL)
             self.assertIn(".matrixs/.env", (root / ".gitignore").read_text(encoding="utf-8"))
             backup_dir = latest_backup(root)
             self.assertIsNotNone(backup_dir)
             self.assertEqual(read_manifest(backup_dir)["project_root"], ".")
-            self.assertEqual(main(["status", "--path", str(root), "--offline"]), 0)
+            with self.matrixs_environment(), patch(
+                "matrixs.cli.verify_connection", return_value={"status": {"service": "Matrixs"}}
+            ) as verify:
+                self.assertEqual(main(["status", "--path", str(root)]), 0)
+            self.assertEqual(verify.call_args.args[0].api_url, MATRIXS_PRODUCTION_API_URL)
 
-            self.assertEqual(main(["disconnect", "--path", str(root)]), 0)
+            with self.matrixs_environment(), patch(
+                "matrixs.cli.disconnect_installation", return_value={"ok": True}
+            ) as disconnect:
+                self.assertEqual(main(["disconnect", "--path", str(root)]), 0)
+            self.assertEqual(disconnect.call_args.args[0].api_url, MATRIXS_PRODUCTION_API_URL)
             self.assertFalse(config_path.exists())
             self.assertFalse(secret_path.exists())
             self.assertEqual((root / ".gitignore").read_text(encoding="utf-8"), ".venv/\n")
@@ -302,13 +483,17 @@ class MatrixsConnectorTests(unittest.TestCase):
             entered = Credentials(
                 project_id="prj_new",
                 api_key="mx_new",
-                api_url="https://matrixs.example",
+                api_url=MATRIXS_PRODUCTION_API_URL,
                 project_name="New Agent",
                 installation_id="inst_new",
             )
-            with patch("matrixs.cli.collect_credentials_in_browser", return_value=entered) as collect, patch(
-                "matrixs.cli.send_test_event", return_value={"workflow_id": "wf_test"}
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(self.matrixs_environment())
+                collect = stack.enter_context(
+                    patch("matrixs.cli.collect_credentials_in_browser", return_value=entered)
+                )
+                for connection_patch in self.connection_patches("prj_new"):
+                    stack.enter_context(connection_patch)
                 result = main(["connect", "--path", str(root), "--yes"])
 
             self.assertEqual(result, 0)
@@ -324,7 +509,7 @@ class MatrixsConnectorTests(unittest.TestCase):
             entered = Credentials(
                 project_id="prj_progress",
                 api_key="mx_progress",
-                api_url="https://matrixs.example",
+                api_url=MATRIXS_PRODUCTION_API_URL,
                 project_name="Progress Agent",
                 installation_id="inst_progress",
             )
@@ -334,24 +519,32 @@ class MatrixsConnectorTests(unittest.TestCase):
                 return entered
 
             output = io.StringIO()
-            with patch("matrixs.cli.collect_credentials_in_browser", side_effect=collect), patch(
-                "matrixs.cli.validate_credentials", return_value={"project": {"id": "prj_progress"}}
-            ), patch("matrixs.cli.send_test_event", return_value={"workflow_id": "wf_progress"}), redirect_stdout(output):
+            with ExitStack() as stack:
+                stack.enter_context(self.matrixs_environment())
+                stack.enter_context(patch("matrixs.cli.collect_credentials_in_browser", side_effect=collect))
+                for connection_patch in self.connection_patches("prj_progress"):
+                    stack.enter_context(connection_patch)
+                stack.enter_context(redirect_stdout(output))
                 result = main(["connect", "--path", str(root), "--yes"])
 
             self.assertEqual(result, 0)
             text = output.getvalue()
             for label in (
                 "Detecting application...",
-                "Testing Matrixs connection...",
+                "Connecting to Matrixs Cloud...",
+                "Validating Project ID...",
+                "Validating API key...",
                 "Credentials received...",
+                "Registering installation...",
                 "Creating backup...",
                 "Adding Matrixs integration...",
                 "Saving configuration...",
-                "Testing instrumentation...",
+                "Testing telemetry...",
+                "Integration verified...",
             ):
                 self.assertIn(label, text)
-            self.assertIn("Progress Agent is connected to Matrixs.", text)
+            self.assertIn("Project connected successfully.", text)
+            self.assertIn(MATRIXS_PRODUCTION_API_URL, text)
             self.assertNotIn("mx_progress", text)
 
     def test_failed_verification_restores_every_changed_file(self) -> None:
@@ -362,13 +555,24 @@ class MatrixsConnectorTests(unittest.TestCase):
             entered = Credentials(
                 project_id="prj_failure",
                 api_key="mx_failure",
-                api_url="https://matrixs.example",
+                api_url=MATRIXS_PRODUCTION_API_URL,
                 project_name="Failure Agent",
                 installation_id="inst_failure",
             )
-            with patch("matrixs.cli.collect_credentials_in_browser", return_value=entered), patch(
-                "matrixs.cli.send_test_event", side_effect=RuntimeError("backend unavailable")
-            ):
+            with ExitStack() as stack:
+                stack.enter_context(self.matrixs_environment())
+                stack.enter_context(patch("matrixs.cli.collect_credentials_in_browser", return_value=entered))
+                stack.enter_context(patch("matrixs.cli.check_cloud_health", return_value={"ok": True, "service": "Matrixs"}))
+                stack.enter_context(
+                    patch(
+                        "matrixs.cli.validate_credentials",
+                        return_value={"project": {"id": "prj_failure"}, "api_key": {"id": "key_test"}},
+                    )
+                )
+                stack.enter_context(patch("matrixs.cli.register_installation", return_value={"ok": True}))
+                stack.enter_context(
+                    patch("matrixs.cli.send_test_event", side_effect=RuntimeError("backend unavailable"))
+                )
                 result = main(["connect", "--path", str(root), "--yes"])
 
             self.assertEqual(result, 1)
@@ -383,6 +587,8 @@ class MatrixsConnectorTests(unittest.TestCase):
             parser.parse_args(["connect", "--api-key", "mx_secret"])
         with self.assertRaises(SystemExit):
             parser.parse_args(["connect", "--token", "mxct_secret"])
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["connect", "--api-url", "http://127.0.0.1:8000"])
 
 
 if __name__ == "__main__":

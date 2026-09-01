@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 from matrixs.client import MatrixsClient
-from matrixs.config import DEFAULT_API_URL, load_project_connection
+from matrixs.config import load_project_connection, resolve_matrixs_api_url
 
 from .models import Credentials
 
@@ -36,13 +36,7 @@ def obtain_credentials(
 ) -> Credentials:
     existing = load_project_connection(project_root)
     resolved_name = _value(project_name, existing.get("project_name"), default=project_root.name)
-    resolved_url = _value(
-        api_url,
-        os.getenv("MATRIXS_API_URL"),
-        os.getenv("SOFTWARE_API_URL"),
-        existing.get("api_url"),
-        default=DEFAULT_API_URL,
-    ).rstrip("/")
+    resolved_url = resolve_matrixs_api_url(api_url, existing.get("api_url"))
     if connection_token:
         installation_id = f"inst_{uuid.uuid4().hex}"
         response = MatrixsClient(

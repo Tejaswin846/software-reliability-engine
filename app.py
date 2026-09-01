@@ -191,7 +191,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.0")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.1")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -1887,6 +1887,15 @@ class APIKeyCreate(BaseModel):
 class SDKConnectionExchange(BaseModel):
     token: str = Field(..., min_length=20, max_length=240)
     installation_id: Optional[str] = Field(None, max_length=180)
+    device_label: Optional[str] = Field(None, max_length=180)
+    operating_system: Optional[str] = Field(None, max_length=180)
+    runtime: Optional[str] = Field(None, max_length=180)
+    environment: str = Field("development", max_length=80)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SDKInstallationRegistration(BaseModel):
+    installation_id: str = Field(..., min_length=1, max_length=180)
     device_label: Optional[str] = Field(None, max_length=180)
     operating_system: Optional[str] = Field(None, max_length=180)
     runtime: Optional[str] = Field(None, max_length=180)
@@ -7852,6 +7861,64 @@ def sdk_exchange_connection_token(payload: SDKConnectionExchange) -> Dict[str, A
         "api_key_prefix": generated_key["key_prefix"],
         "message": "Matrixs project connection authorized.",
     }
+
+
+def _record_sdk_installation_state(
+    event_type: str,
+    payload: SDKInstallationRegistration,
+    api_key_context: Dict[str, Any],
+) -> Dict[str, Any]:
+    init_db()
+    timestamp = now_iso()
+    with closing(connect()) as db, db:
+        record_analytics_event(
+            db,
+            event_type,
+            user_id=api_key_context["user_id"],
+            project_id=api_key_context["project_id"],
+            metadata={
+                **payload.metadata,
+                "installation_id": payload.installation_id,
+                "device_label": payload.device_label or "Matrixs-connected device",
+                "operating_system": payload.operating_system or "Unknown",
+                "runtime": payload.runtime or "Unknown",
+                "environment": payload.environment,
+                "api_key_id": api_key_context["api_key_id"],
+            },
+        )
+    return {
+        "ok": True,
+        "installation": {
+            "id": payload.installation_id,
+            "project_id": api_key_context["project_id"],
+            "state": "connected" if event_type == "matrixs_installation_registered" else "disconnected",
+            "updated_at": timestamp,
+        },
+    }
+
+
+@app.post("/api/sdk/installations/register")
+def sdk_register_installation(
+    payload: SDKInstallationRegistration,
+    api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
+) -> Dict[str, Any]:
+    return _record_sdk_installation_state(
+        "matrixs_installation_registered",
+        payload,
+        api_key_context,
+    )
+
+
+@app.post("/api/sdk/installations/disconnect")
+def sdk_disconnect_installation(
+    payload: SDKInstallationRegistration,
+    api_key_context: Dict[str, Any] = Depends(require_sdk_api_key),
+) -> Dict[str, Any]:
+    return _record_sdk_installation_state(
+        "matrixs_installation_disconnected",
+        payload,
+        api_key_context,
+    )
 
 
 @app.get("/api/sdk/status")

@@ -266,6 +266,10 @@ matrixs status
 matrixs run
 ```
 
+Normal connections use Matrixs Cloud at
+`https://software-reliability-engine.onrender.com`. No API URL argument or
+localhost address is required.
+
 For local development from this repo:
 
 ```bash
@@ -301,7 +305,7 @@ Then:
 Example:
 
 ```bash
-MATRIXS_API_URL=http://127.0.0.1:8300 matrixs connect
+MATRIXS_MODE=local MATRIXS_API_URL=http://127.0.0.1:8300 matrixs connect
 matrixs status
 matrixs run
 ```

@@ -4,9 +4,12 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
+from urllib.parse import urlsplit
 
 
-DEFAULT_API_URL = "https://software-reliability-engine.onrender.com"
+MATRIXS_PRODUCTION_API_URL = "https://software-reliability-engine.onrender.com"
+MATRIXS_LOCAL_API_URL = "http://127.0.0.1:8000"
+DEFAULT_API_URL = MATRIXS_PRODUCTION_API_URL
 MATRIXS_DIR_NAME = ".matrixs"
 PROJECT_CONFIG_NAME = "config.json"
 PROJECT_ENV_NAME = ".env"
@@ -62,6 +65,77 @@ def _first(*values: Optional[Any], default: str = "") -> str:
     return default
 
 
+def _local_development_requested(environ: Mapping[str, str]) -> bool:
+    mode = str(environ.get("MATRIXS_MODE") or "").strip().lower()
+    enabled = str(environ.get("MATRIXS_LOCAL_DEVELOPMENT") or "").strip().lower()
+    return mode in {"local", "development", "dev"} or enabled in {"1", "true", "yes", "on"}
+
+
+def _normalized_api_url(value: Any, *, source: str, allow_loopback: bool) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ConfigError(f"{source} must be a valid http:// or https:// URL.")
+    hostname = (parsed.hostname or "").lower()
+    if hostname in {"localhost", "127.0.0.1", "::1"} and not allow_loopback:
+        raise ConfigError(
+            f"{source} points to localhost. Set MATRIXS_MODE=local to explicitly enable local development."
+        )
+    return normalized
+
+
+def resolve_matrixs_api_url(
+    *configured_urls: Optional[Any],
+    environ: Optional[Mapping[str, str]] = None,
+) -> str:
+    """Resolve one backend URL while preventing accidental localhost fallbacks."""
+
+    values = os.environ if environ is None else environ
+    local_mode = _local_development_requested(values)
+    matrixs_override = str(values.get("MATRIXS_API_URL") or "").strip()
+    if matrixs_override:
+        return _normalized_api_url(
+            matrixs_override,
+            source="MATRIXS_API_URL",
+            allow_loopback=local_mode,
+        )
+    if local_mode:
+        local_url = str(values.get("MATRIXS_LOCAL_API_URL") or "").strip() or MATRIXS_LOCAL_API_URL
+        return _normalized_api_url(
+            local_url,
+            source="MATRIXS_LOCAL_API_URL",
+            allow_loopback=True,
+        )
+
+    # SOFTWARE_API_URL remains read-only compatibility for legacy installs.
+    legacy_override = str(values.get("SOFTWARE_API_URL") or "").strip()
+    if legacy_override:
+        try:
+            return _normalized_api_url(
+                legacy_override,
+                source="SOFTWARE_API_URL",
+                allow_loopback=False,
+            )
+        except ConfigError:
+            # Old local defaults must never pull a normal Matrixs connection
+            # back to localhost.
+            pass
+
+    for configured_url in configured_urls:
+        if configured_url is None or not str(configured_url).strip():
+            continue
+        try:
+            return _normalized_api_url(
+                configured_url,
+                source="Saved Matrixs API URL",
+                allow_loopback=False,
+            )
+        except ConfigError:
+            # Ignore stale localhost values written by older Matrixs builds.
+            continue
+    return MATRIXS_PRODUCTION_API_URL
+
+
 def load_global_config() -> Dict[str, Any]:
     if GLOBAL_CONFIG_PATH.exists():
         return read_json(GLOBAL_CONFIG_PATH)
@@ -74,14 +148,11 @@ def load_project_connection(project_root: Path) -> Dict[str, str]:
     secrets = parse_dotenv(project_env_path(root))
     global_config = load_global_config()
     return {
-        "api_url": _first(
-            os.getenv("MATRIXS_API_URL"),
-            os.getenv("SOFTWARE_API_URL"),
+        "api_url": resolve_matrixs_api_url(
             secrets.get("MATRIXS_API_URL"),
             config.get("api_url"),
             global_config.get("api_url"),
-            default=DEFAULT_API_URL,
-        ).rstrip("/"),
+        ),
         "api_key": _first(
             os.getenv("MATRIXS_API_KEY"),
             os.getenv("SOFTWARE_API_KEY"),

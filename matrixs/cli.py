@@ -5,7 +5,7 @@ import json
 import sys
 import webbrowser
 from pathlib import Path
-from typing import Callable, Dict, Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 from matrixs.client import MatrixsClient, MatrixsClientError
 from matrixs.config import (
@@ -13,6 +13,7 @@ from matrixs.config import (
     load_project_connection,
     project_config_path,
     read_json,
+    resolve_matrixs_api_url,
     write_global_config,
 )
 from matrixs.connector.analyzer import analyze_project
@@ -25,7 +26,11 @@ from matrixs.connector.operations import apply_plan, rollback_backup
 from matrixs.connector.permissions import request_integration_permission
 from matrixs.connector.planner import build_integration_plan
 from matrixs.connector.verify import (
+    check_cloud_health,
+    disconnect_installation,
+    register_installation,
     send_test_event,
+    validate_api_key_status,
     validate_credentials,
     verify_connection,
     verify_local_integration,
@@ -127,6 +132,15 @@ def _show_plan(plan: IntegrationPlan) -> None:
         print(f"- {change.action}: {relative}{suffix}")
 
 
+def _terminal_symbol(symbol: str, fallback: str) -> str:
+    encoding = getattr(sys.stdout, "encoding", None) or "utf-8"
+    try:
+        symbol.encode(encoding)
+    except (LookupError, UnicodeEncodeError):
+        return fallback
+    return symbol
+
+
 def _run_progress(label: str, action: Callable[[], object]) -> object:
     print(f"{label:<40}", end="", flush=True)
     try:
@@ -134,12 +148,12 @@ def _run_progress(label: str, action: Callable[[], object]) -> object:
     except Exception:
         print("x")
         raise
-    print("\u2713")
+    print(_terminal_symbol("\u2713", "[OK]"))
     return result
 
 
 def _complete_progress(label: str) -> None:
-    print(f"{label:<40}\u2713")
+    print(f"{label:<40}{_terminal_symbol(chr(0x2713), '[OK]')}")
 
 
 def command_connect(args: argparse.Namespace) -> int:
@@ -148,7 +162,10 @@ def command_connect(args: argparse.Namespace) -> int:
         _open_manual_guide()
         return 0
     start = Path(args.path or Path.cwd()).expanduser().resolve()
+    resolved_api_url = resolve_matrixs_api_url()
     print("Matrixs project connector")
+    print("Matrixs Cloud:")
+    print(resolved_api_url)
     location = "." if start == Path.cwd().resolve() else start.name
     print(f"Searching {location} and controlled subfolders...")
     candidate = _discover_or_prompt(
@@ -181,7 +198,7 @@ def command_connect(args: argparse.Namespace) -> int:
         preview_credentials = Credentials(
             project_id=existing.get("project_id") or "project-id-entered-in-browser",
             api_key="secret-entered-in-browser",
-            api_url=args.api_url or existing.get("api_url") or "",
+            api_url=resolved_api_url,
             project_name=existing.get("project_name") or candidate.path.name,
             installation_id="installation-created-after-validation",
         )
@@ -191,20 +208,31 @@ def command_connect(args: argparse.Namespace) -> int:
         return 0
 
     def validate_for_browser(credentials: Credentials) -> object:
-        return _run_progress(
-            "Testing Matrixs connection...",
+        _run_progress(
+            "Connecting to Matrixs Cloud...",
+            lambda: check_cloud_health(credentials, timeout=args.timeout),
+        )
+        status = _run_progress(
+            "Validating Project ID...",
             lambda: validate_credentials(credentials, timeout=args.timeout),
         )
+        assert isinstance(status, dict)
+        _run_progress("Validating API key...", lambda: validate_api_key_status(status))
+        return status
 
     credentials = collect_credentials_in_browser(
         candidate.path,
         project_id=existing.get("project_id") or "",
         project_name=existing.get("project_name") or candidate.path.name,
-        api_url=args.api_url or existing.get("api_url") or "",
+        api_url=resolved_api_url,
         timeout=args.setup_timeout,
         validator=validate_for_browser,
     )
     _complete_progress("Credentials received...")
+    _run_progress(
+        "Registering installation...",
+        lambda: register_installation(credentials, timeout=args.timeout),
+    )
     backup_id = new_backup_id()
     plan = build_integration_plan(analysis, credentials, backup_id=backup_id)
     _show_plan(plan)
@@ -229,18 +257,22 @@ def command_connect(args: argparse.Namespace) -> int:
             lambda: apply_plan(plan, configuration_changes),
         )
 
-        def verify_instrumentation() -> Dict[str, object]:
-            local = verify_local_integration(plan)
-            event = send_test_event(credentials, timeout=args.timeout)
-            return {"local": local, "test_event": event}
-
-        verification = _run_progress("Testing instrumentation...", verify_instrumentation)
+        test_event = _run_progress(
+            "Testing telemetry...",
+            lambda: send_test_event(credentials, timeout=args.timeout),
+        )
+        local_verification = _run_progress(
+            "Integration verified...",
+            lambda: verify_local_integration(plan),
+        )
+        verification = {"local": local_verification, "test_event": test_event}
     except Exception:
         rollback_backup(plan.project_root, backup_dir)
         print("Integration failed. Matrixs restored the project from its backup.", file=sys.stderr)
         raise
     changed_count = len(runtime_changed) + len(configuration_changed)
-    print(f"{credentials.project_name} is connected to Matrixs.")
+    print("Project connected successfully.")
+    print(f"Project: {credentials.project_name} ({credentials.project_id})")
     print(f"Applied {changed_count} reversible Matrixs integration change(s).")
     print("Start the application with: matrixs run")
     if isinstance(verification, dict):
@@ -258,6 +290,7 @@ def command_status(args: argparse.Namespace) -> int:
     config = read_json(path)
     connection = load_project_connection(root)
     print("Matrixs status: connected")
+    print(f"Matrixs Cloud: {connection['api_url']}")
     print(f"Project: {config.get('project_name')} ({config.get('project_id')})")
     print(f"Framework: {config.get('framework')}")
     print(f"Adapters: {', '.join(config.get('adapters') or [])}")
@@ -298,6 +331,23 @@ def command_disconnect(args: argparse.Namespace) -> int:
     backup_dir = find_backup(root, backup_id)
     if backup_dir is None:
         raise CLIError(f"Matrixs integration backup {backup_id} is missing.")
+    connection = load_project_connection(root)
+    print(f"Matrixs Cloud: {connection['api_url']}")
+    if connection.get("api_key") and connection.get("installation_id"):
+        credentials = Credentials(
+            project_id=connection["project_id"],
+            api_key=connection["api_key"],
+            api_url=connection["api_url"],
+            project_name=connection["project_name"],
+            installation_id=connection["installation_id"],
+        )
+        try:
+            _run_progress(
+                "Disconnecting from Matrixs Cloud...",
+                lambda: disconnect_installation(credentials, timeout=args.timeout),
+            )
+        except MatrixsClientError as error:
+            print(f"Matrixs Cloud disconnect warning: {error}", file=sys.stderr)
     restored = rollback_backup(root, backup_dir)
     print(f"Matrixs disconnected. Restored {len(restored)} path(s); customer files were preserved.")
     return 0
@@ -309,7 +359,7 @@ def command_run(args: argparse.Namespace) -> int:
 
 
 def command_login(args: argparse.Namespace) -> int:
-    api_url = (args.api_url or input("Matrixs API URL: ").strip()).rstrip("/")
+    api_url = resolve_matrixs_api_url(args.api_url)
     import getpass
 
     api_key = getpass.getpass("Matrixs API Key: ").strip()
@@ -364,7 +414,6 @@ def build_parser() -> argparse.ArgumentParser:
     connect.add_argument("--max-depth", type=int, default=3, help="Maximum controlled subfolder search depth.")
     connect.add_argument("--yes", action="store_true", help="Grant integration permission non-interactively.")
     connect.add_argument("--manual", action="store_true", help="Open the manual integration guide without changing files.")
-    connect.add_argument("--api-url", help="Matrixs Cloud API base URL.")
     connect.add_argument("--timeout", type=float, default=10.0)
     connect.add_argument("--setup-timeout", type=float, default=600.0, help="Seconds to wait for the local credential page.")
     connect.add_argument("--dry-run", action="store_true", help="Show the integration plan without changing files.")
@@ -378,6 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     disconnect = subparsers.add_parser("disconnect", help="Remove Matrixs integration using its original backup.")
     disconnect.add_argument("--path")
+    disconnect.add_argument("--timeout", type=float, default=10.0)
     disconnect.set_defaults(func=command_disconnect)
 
     undo = subparsers.add_parser("undo", help="Restore the latest Matrixs backup.")

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlsplit
 
-from matrixs.config import DEFAULT_API_URL
+from matrixs.config import MATRIXS_PRODUCTION_API_URL, resolve_matrixs_api_url
 
 from .models import Credentials
 
@@ -131,7 +131,7 @@ def collect_credentials_in_browser(
     *,
     project_id: str = "",
     project_name: str = "",
-    api_url: str = DEFAULT_API_URL,
+    api_url: str = MATRIXS_PRODUCTION_API_URL,
     timeout: float = 600.0,
     browser_open: Callable[[str], object] = webbrowser.open,
     validator: Optional[Callable[[Credentials], object]] = None,
@@ -146,7 +146,7 @@ def collect_credentials_in_browser(
         "project_id": project_id.strip(),
         "project_name": project_name.strip() or root.name,
     }
-    resolved_api_url = api_url.strip().rstrip("/") or DEFAULT_API_URL
+    resolved_api_url = resolve_matrixs_api_url(api_url)
     if not _valid_api_url(resolved_api_url):
         raise ValueError("Matrixs API URL must be a valid http:// or https:// address.")
 

@@ -7,9 +7,11 @@ import sys
 import urllib.error
 import urllib.request
 
+from matrixs.config import resolve_matrixs_api_url
+
 
 def main() -> None:
-    api_url = os.getenv("SOFTWARE_API_URL", "http://127.0.0.1:8300").rstrip("/")
+    api_url = resolve_matrixs_api_url()
     payload = {
         "source": "sdk_install_ping",
         "sdk_version": "0.1.0",

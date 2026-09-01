@@ -8,6 +8,7 @@ import time
 import uuid
 from typing import Optional
 
+from matrixs.config import resolve_matrixs_api_url
 from matrixs.monitor import ReliabilityMonitor, WorkflowMonitor
 
 
@@ -50,9 +51,9 @@ def activate_from_environment() -> bool:
     if _SESSION is not None or os.getenv("MATRIXS_RUNTIME_ACTIVE") == "1":
         return False
     api_key = os.getenv("MATRIXS_API_KEY", "").strip()
-    api_url = os.getenv("MATRIXS_API_URL", "").strip()
+    api_url = resolve_matrixs_api_url()
     project_name = os.getenv("MATRIXS_PROJECT_NAME", "").strip()
-    if not api_key or not api_url or not project_name:
+    if not api_key or not project_name:
         return False
     os.environ["MATRIXS_RUNTIME_ACTIVE"] = "1"
     monitor = ReliabilityMonitor(

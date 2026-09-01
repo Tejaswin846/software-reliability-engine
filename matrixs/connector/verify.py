@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import platform
 import socket
 from pathlib import Path
@@ -31,6 +32,45 @@ def validate_credentials(credentials: Credentials, timeout: float = 10.0) -> Dic
             f"{remote_project_id}, not {credentials.project_id}."
         )
     return status
+
+
+def check_cloud_health(credentials: Credentials, timeout: float = 10.0) -> Dict[str, Any]:
+    health = _client(credentials, timeout).get("/health")
+    if str(health.get("service") or "").lower() != "matrixs":
+        raise RuntimeError("The configured backend did not identify itself as Matrixs.")
+    return health
+
+
+def validate_api_key_status(status: Dict[str, Any]) -> Dict[str, Any]:
+    api_key = status.get("api_key") or {}
+    if not str(api_key.get("id") or "").strip():
+        raise RuntimeError("Matrixs did not confirm the supplied API key.")
+    return api_key
+
+
+def _installation_payload(credentials: Credentials) -> Dict[str, Any]:
+    return {
+        "installation_id": credentials.installation_id,
+        "device_label": socket.gethostname() or "Matrixs-connected device",
+        "operating_system": platform.platform(),
+        "runtime": f"Python {platform.python_version()}",
+        "environment": os.getenv("MATRIXS_ENVIRONMENT", "development"),
+        "metadata": {"source": "matrixs_connect"},
+    }
+
+
+def register_installation(credentials: Credentials, timeout: float = 10.0) -> Dict[str, Any]:
+    return _client(credentials, timeout).post(
+        "/api/sdk/installations/register",
+        _installation_payload(credentials),
+    )
+
+
+def disconnect_installation(credentials: Credentials, timeout: float = 10.0) -> Dict[str, Any]:
+    return _client(credentials, timeout).post(
+        "/api/sdk/installations/disconnect",
+        _installation_payload(credentials),
+    )
 
 
 def send_test_event(credentials: Credentials, timeout: float = 10.0) -> Dict[str, Any]:
@@ -92,6 +132,8 @@ def verify_local_integration(plan: IntegrationPlan) -> Dict[str, Any]:
 
 
 def verify_connection(credentials: Credentials, timeout: float = 10.0) -> Dict[str, Any]:
+    health = check_cloud_health(credentials, timeout=timeout)
     status = validate_credentials(credentials, timeout=timeout)
+    validate_api_key_status(status)
     test_event = send_test_event(credentials, timeout=timeout)
-    return {"status": status, "test_event": test_event}
+    return {"health": health, "status": status, "test_event": test_event}

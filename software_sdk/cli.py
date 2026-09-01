@@ -10,6 +10,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from matrixs.config import MATRIXS_PRODUCTION_API_URL, resolve_matrixs_api_url
+
 from .client import SoftwareClient, SoftwareClientError
 from .monitor import ReliabilityMonitor
 
@@ -17,7 +19,7 @@ from .monitor import ReliabilityMonitor
 CONFIG_DIR = Path.home() / ".software"
 GLOBAL_CONFIG_PATH = CONFIG_DIR / "config.json"
 PROJECT_CONFIG_PATH = Path("software.config.json")
-DEFAULT_API_URL = "http://127.0.0.1:8000"
+DEFAULT_API_URL = MATRIXS_PRODUCTION_API_URL
 
 
 class CLIError(RuntimeError):
@@ -47,11 +49,9 @@ def _default_project_name() -> str:
 def load_config() -> Dict[str, Any]:
     global_config = _read_json(GLOBAL_CONFIG_PATH)
     project_config = _read_json(PROJECT_CONFIG_PATH)
-    api_url = (
-        os.getenv("SOFTWARE_API_URL")
-        or project_config.get("api_url")
-        or global_config.get("api_url")
-        or DEFAULT_API_URL
+    api_url = resolve_matrixs_api_url(
+        project_config.get("api_url"),
+        global_config.get("api_url"),
     )
     api_key = (
         os.getenv("SOFTWARE_API_KEY")
@@ -66,7 +66,7 @@ def load_config() -> Dict[str, Any]:
         or _default_project_name()
     )
     return {
-        "api_url": str(api_url).rstrip("/"),
+        "api_url": api_url,
         "api_key": str(api_key),
         "project_name": str(project_name),
         "global_config_path": str(GLOBAL_CONFIG_PATH),
@@ -82,7 +82,8 @@ def require_api_key(config: Dict[str, Any]) -> str:
 
 
 def command_login(args: argparse.Namespace) -> int:
-    api_url = (args.api_url or input(f"Software API URL [{DEFAULT_API_URL}]: ").strip() or DEFAULT_API_URL).rstrip("/")
+    requested_url = args.api_url or input(f"Software API URL [{DEFAULT_API_URL}]: ").strip()
+    api_url = resolve_matrixs_api_url(requested_url)
     api_key = args.api_key or getpass.getpass("Software API key: ").strip()
     if not api_key:
         raise CLIError("API key is required.")
@@ -113,7 +114,7 @@ def command_login(args: argparse.Namespace) -> int:
 def command_init(args: argparse.Namespace) -> int:
     config = load_config()
     project_name = args.project_name or config["project_name"] or _default_project_name()
-    api_url = (args.api_url or config["api_url"] or DEFAULT_API_URL).rstrip("/")
+    api_url = resolve_matrixs_api_url(args.api_url, config["api_url"])
     output_path = Path(args.output)
     if output_path.exists() and not args.force:
         raise CLIError(f"{output_path} already exists. Use --force to overwrite it.")
