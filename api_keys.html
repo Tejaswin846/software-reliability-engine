@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Connect a Project - Matrixs</title>
-    <link rel="stylesheet" href="/saas.css?v=20260830b">
+    <link rel="stylesheet" href="/saas.css?v=20260901a">
     <link rel="stylesheet" href="/ui.css?v=20260808c">
     <script src="/ui.js?v=20260808c" defer></script>
   </head>
@@ -49,13 +49,19 @@
         </div>
       </section>
 
-      <details class="panel advanced-section">
-        <summary>Manual integration (Project ID + API key)</summary>
-        <div class="stack advanced-content">
-          <p class="muted">Choose this path if you do not want Matrixs to change project files automatically. Select a project, create an API key, and add the values yourself using the manual guide.</p>
+      <section class="panel stack" aria-labelledby="project-credentials-title">
+          <div>
+            <p class="eyebrow">Credentials for the local page</p>
+            <h2 id="project-credentials-title">Project ID and API key</h2>
+            <p class="muted">Select a project, copy its ID, then generate an API key. Paste both only into the local page opened by <code>matrixs connect</code>.</p>
+          </div>
           <label class="project-field">Project <select id="project-select"></select></label>
           <p id="empty-project-help" class="security-note" hidden>No project is available yet. <a href="/projects">Create a project</a>, then return here.</p>
           <div class="manual-credential">
+            <div>
+              <span class="field-label">Project Name</span>
+              <strong id="manual-project-name">Select a project</strong>
+            </div>
             <div>
               <span class="field-label">Project ID</span>
               <code id="manual-project-id">Select a project</code>
@@ -63,12 +69,18 @@
             <button type="button" class="secondary" data-copy-target="manual-project-id">Copy Project ID</button>
           </div>
           <div class="row">
-            <button id="create-key-button" type="button" class="secondary">Create permanent API key</button>
-            <button id="copy-api-key-button" type="button" class="secondary" data-copy-target="new-api-key" disabled>Copy new API key</button>
-            <a class="button secondary" href="/developer-docs/sdk-usage">Open manual integration guide</a>
+            <button id="create-key-button" type="button">Generate API Key</button>
+            <button id="regenerate-key-button" type="button" class="secondary">Regenerate</button>
           </div>
-          <div id="api-key-message" class="message"></div>
-          <div id="new-api-key" class="key-box">A newly created permanent key will appear here once.</div>
+          <div id="api-key-message" class="message" aria-live="polite"></div>
+          <div class="generated-key-field">
+            <label for="new-api-key">New API key <span class="muted">(shown once)</span></label>
+            <input id="new-api-key" type="password" readonly placeholder="Generate an API key to show it here">
+            <div class="row">
+              <button id="show-api-key-button" type="button" class="secondary" disabled>Show API Key</button>
+              <button id="copy-api-key-button" type="button" class="secondary" data-copy-target="new-api-key" disabled>Copy API Key</button>
+            </div>
+          </div>
           <div class="table-wrap">
             <table>
               <thead>
@@ -77,10 +89,17 @@
               <tbody id="api-key-table"></tbody>
             </table>
           </div>
+      </section>
+
+      <details class="panel advanced-section">
+        <summary>Manual integration guide</summary>
+        <div class="stack advanced-content">
+          <p class="muted">If you decline automatic modification in the terminal, Matrixs can open the manual guide and exit without changing the project.</p>
+          <a class="button secondary" href="/developer-docs/sdk-usage">Open manual integration guide</a>
         </div>
       </details>
     </main>
     <script src="/auth.js"></script>
-    <script src="/saas.js?v=20260830b"></script>
+    <script src="/saas.js?v=20260901a"></script>
   </body>
 </html>

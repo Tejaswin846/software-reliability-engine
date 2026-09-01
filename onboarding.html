@@ -22,7 +22,7 @@
       </nav>
     </header>
 
-    <main>
+    <main id="install-sdk-page">
       <section class="hero">
         <div>
           <p class="eyebrow">Developer Onboarding</p>
@@ -44,9 +44,17 @@
             <span class="dot"></span>
             <span class="muted">terminal</span>
           </div>
-          <div class="code-block">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
-matrixs connect
-matrixs status</div>
+          <div class="stack" aria-label="Matrixs setup commands">
+            <div>
+              <div class="row"><strong>1. SDK installation</strong><button type="button" class="secondary" data-copy-target="onboarding-install-command">Copy</button></div>
+              <div id="onboarding-install-command" class="code-block">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</div>
+            </div>
+            <div>
+              <div class="row"><strong>2. Connect Matrixs</strong><button type="button" class="secondary" data-copy-target="onboarding-connect-command">Copy</button></div>
+              <div id="onboarding-connect-command" class="code-block">matrixs connect</div>
+            </div>
+            <div id="install-message" class="message" aria-live="polite"></div>
+          </div>
         </div>
       </section>
 
@@ -97,5 +105,6 @@ matrixs status</div>
     <footer class="footer">Matrixs — installable reliability monitoring for AI agents</footer>
     </div>
     <script src="/auth.js"></script>
+    <script src="/saas.js?v=20260901a"></script>
   </body>
 </html>

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Install Matrixs</title>
-    <link rel="stylesheet" href="/saas.css?v=20260830b">
+    <link rel="stylesheet" href="/saas.css?v=20260901a">
     <link rel="stylesheet" href="/ui.css?v=20260808c">
     <script src="/ui.js?v=20260808c" defer></script>
   </head>
@@ -35,32 +35,45 @@
         <div id="install-message" class="message"></div>
       </section>
 
+      <section class="panel stack setup-commands" aria-labelledby="setup-commands-title">
+        <div>
+          <p class="eyebrow">Two-step setup</p>
+          <h2 id="setup-commands-title">Install, then connect.</h2>
+          <p class="muted">Run these separately. Each command is safe to copy as shown.</p>
+        </div>
+        <div class="setup-command-grid">
+          <article class="card stack setup-command-card">
+            <div class="row">
+              <div><span class="step-number">1</span><h2>SDK installation</h2></div>
+              <button type="button" class="secondary" data-copy-target="install-command-github">Copy install command</button>
+            </div>
+            <pre id="install-command-github" class="code-snippet">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
+          </article>
+          <article class="card stack setup-command-card">
+            <div class="row">
+              <div><span class="step-number">2</span><h2>Connect Matrixs</h2></div>
+              <button type="button" class="secondary" data-copy-target="install-command-connect">Copy connect command</button>
+            </div>
+            <pre id="install-command-connect" class="code-snippet">matrixs connect</pre>
+          </article>
+        </div>
+        <p class="security-note">The connection command is exactly <code>matrixs connect</code>. It contains no Project ID, API key, token, secret, or API URL.</p>
+      </section>
+
       <section class="panel stack">
         <div class="row">
           <div>
-            <h2>Project Connection</h2>
-            <p class="muted">The command contains no token, Project ID, or API key.</p>
+            <h2>Get your Project ID and API key</h2>
+            <p class="muted">Matrixs asks for them later on a masked local browser page—not in the terminal.</p>
           </div>
           <a class="button" href="/api-keys">Open Project Connection</a>
-        </div>
-        <div class="row">
-          <pre id="install-command-connect" class="code-snippet">matrixs connect</pre>
-          <button type="button" class="secondary" data-copy-target="install-command-connect">Copy command</button>
         </div>
         <p class="security-note">After you approve automatic integration, Matrixs collects credentials on a loopback-only page, creates a reversible backup, saves secrets to a git-ignored file, and verifies the connection. Choose manual integration in the terminal if you prefer to make the changes yourself.</p>
       </section>
 
-      <section class="panel stack">
-        <h2>Install Commands</h2>
-        <div class="install-command-list">
-          <article class="card stack">
-            <div class="row">
-              <h2>Current GitHub install</h2>
-              <button type="button" class="secondary" data-copy-target="install-command-github">Copy GitHub install command</button>
-            </div>
-            <pre id="install-command-github" class="code-snippet">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
-          </article>
-
+      <details class="panel advanced-section">
+        <summary>Local development install</summary>
+        <div class="advanced-content">
           <article class="card stack">
             <div class="row">
               <h2>Local/dev install</h2>
@@ -68,9 +81,8 @@
             </div>
             <pre id="install-command-local" class="code-snippet">pip install -e .</pre>
           </article>
-
         </div>
-      </section>
+      </details>
 
       <section class="panel stack">
         <h2>Download Installers</h2>
@@ -95,6 +107,6 @@
     </main>
 
     <script src="/auth.js"></script>
-    <script src="/saas.js?v=20260830b"></script>
+    <script src="/saas.js?v=20260901a"></script>
   </body>
 </html>

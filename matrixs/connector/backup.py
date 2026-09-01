@@ -50,7 +50,7 @@ def create_backup(project_root: Path, changes: Iterable[PlanChange], backup_id: 
     manifest = {
         "backup_id": backup_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "project_root": str(root),
+        "project_root": ".",
         "files": records,
     }
     (backup_dir / "manifest.json").write_text(

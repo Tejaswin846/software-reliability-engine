@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,6 +29,10 @@ class MatrixsConnectionTokenTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.client.close()
+        # Starlette's handled HTTPException tracebacks can keep a short-lived
+        # sqlite connection frame alive until cyclic garbage collection runs.
+        # Release it before Windows attempts to remove the temporary database.
+        gc.collect()
         matrixs_app._INITIALIZED_DATABASES.discard(str(matrixs_app.DB_PATH.resolve()))
         matrixs_app.DATA_DIR = self.original_data_dir
         matrixs_app.DB_PATH = self.original_db_path
@@ -116,6 +121,55 @@ class MatrixsConnectionTokenTests(unittest.TestCase):
 
         metadata = client_class.return_value.post.call_args.args[1]["metadata"]
         self.assertEqual(metadata["installation_id"], "inst_cloud")
+
+    def test_project_api_key_can_be_generated_regenerated_and_revoked(self) -> None:
+        with matrixs_app.connect() as db:
+            db.execute(
+                "UPDATE api_keys SET is_active = 0 WHERE project_id = ?",
+                ("prj_dev_local",),
+            )
+        generated = self.client.post(
+            "/api/projects/prj_dev_local/api-keys",
+            headers=self.user_headers,
+            json={},
+        )
+        self.assertEqual(generated.status_code, 200, generated.text)
+        old_key = generated.json()["api_key"]
+
+        regenerated = self.client.post(
+            "/api/projects/prj_dev_local/api-keys/regenerate",
+            headers=self.user_headers,
+            json={},
+        )
+        self.assertEqual(regenerated.status_code, 200, regenerated.text)
+        payload = regenerated.json()
+        new_key = payload["api_key"]
+        self.assertNotEqual(old_key, new_key)
+        self.assertGreaterEqual(payload["revoked_count"], 1)
+
+        listed = self.client.get(
+            "/api/projects/prj_dev_local/api-keys",
+            headers=self.user_headers,
+        )
+        self.assertEqual(listed.status_code, 200)
+        active = [key for key in listed.json()["api_keys"] if key["is_active"]]
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["id"], payload["key"]["id"])
+
+        old_status = self.client.get("/api/sdk/status", headers={"X-Matrixs-API-Key": old_key})
+        new_status = self.client.get("/api/sdk/status", headers={"X-Matrixs-API-Key": new_key})
+        self.assertEqual(old_status.status_code, 403)
+        self.assertEqual(new_status.status_code, 200)
+
+        revoked = self.client.delete(
+            f"/api/projects/prj_dev_local/api-keys/{payload['key']['id']}",
+            headers=self.user_headers,
+        )
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(
+            self.client.get("/api/sdk/status", headers={"X-Matrixs-API-Key": new_key}).status_code,
+            403,
+        )
 
 
 if __name__ == "__main__":

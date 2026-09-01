@@ -6,7 +6,7 @@ import shutil
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 from .backup import read_manifest
 from .models import IntegrationPlan, PlanChange
@@ -29,10 +29,10 @@ def _atomic_write(path: Path, content: bytes) -> None:
             temporary.unlink()
 
 
-def apply_plan(plan: IntegrationPlan) -> List[Path]:
+def apply_plan(plan: IntegrationPlan, changes: Optional[Iterable[PlanChange]] = None) -> List[Path]:
     changed: List[Path] = []
     root = plan.project_root.resolve()
-    for change in plan.changes:
+    for change in plan.changes if changes is None else changes:
         target = change.path.resolve()
         try:
             target.relative_to(root)
@@ -51,7 +51,8 @@ def apply_plan(plan: IntegrationPlan) -> List[Path]:
 def rollback_backup(project_root: Path, backup_dir: Path, *, mark_undone: bool = True) -> List[Path]:
     root = project_root.resolve()
     manifest = read_manifest(backup_dir)
-    manifest_root = Path(str(manifest.get("project_root", ""))).resolve()
+    stored_root = str(manifest.get("project_root", ""))
+    manifest_root = root if stored_root == "." else Path(stored_root).resolve()
     if manifest_root != root:
         raise RuntimeError(f"Backup belongs to {manifest_root}, not {root}.")
     restored: List[Path] = []

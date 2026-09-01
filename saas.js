@@ -183,10 +183,12 @@ async function loadProjects() {
             <div class="row">
               <div>
                 <h2>${escapeHtml(project.name)}</h2>
-                <p class="muted">${escapeHtml(project.id)}</p>
+                <span class="field-label">Project ID</span>
+                <code>${escapeHtml(project.id)}</code>
                 <p class="muted">${project.workflow_count || 0} workflows - ${project.api_key_count || 0} active keys</p>
               </div>
               <div class="nav">
+                <button class="secondary" data-copy-value="${escapeHtml(project.id)}">Copy Project ID</button>
                 <a class="button secondary" href="/api-keys?project=${encodeURIComponent(project.id)}">Connect</a>
                 <button class="danger" data-delete-project="${escapeHtml(project.id)}">Delete</button>
               </div>
@@ -203,9 +205,13 @@ async function loadProjects() {
       )).join("")
       : `<option value="">Create a project first</option>`;
     const keyButton = document.getElementById("create-key-button");
+    const regenerateButton = document.getElementById("regenerate-key-button");
     const emptyProjectHelp = document.getElementById("empty-project-help");
     if (keyButton) {
       keyButton.disabled = !hasProjects;
+    }
+    if (regenerateButton) {
+      regenerateButton.disabled = !hasProjects;
     }
     if (emptyProjectHelp) {
       emptyProjectHelp.hidden = hasProjects;
@@ -240,6 +246,11 @@ function initProjects() {
     }
   });
   document.addEventListener("click", async (event) => {
+    const copyButton = event.target.closest("[data-copy-value]");
+    if (copyButton) {
+      await copyText(copyButton.dataset.copyValue, "project-message", "Project ID copied.");
+      return;
+    }
     const button = event.target.closest("[data-delete-project]");
     if (!button) {
       return;
@@ -268,7 +279,9 @@ async function loadApiKeys() {
           <td>${escapeHtml(key.created_at)}</td>
           <td>${escapeHtml(key.last_used_at || "--")}</td>
           <td>
-            <button class="danger" data-delete-key="${escapeHtml(key.id)}">Revoke</button>
+            ${key.is_active
+              ? `<button class="danger" data-delete-key="${escapeHtml(key.id)}">Revoke</button>`
+              : `<span class="muted">Revoked</span>`}
           </td>
         </tr>
       `).join("")
@@ -278,6 +291,7 @@ async function loadApiKeys() {
 function initApiKeys() {
   const select = document.getElementById("project-select");
   const createButton = document.getElementById("create-key-button");
+  const regenerateButton = document.getElementById("regenerate-key-button");
   if (!select || !createButton) {
     return;
   }
@@ -285,41 +299,66 @@ function initApiKeys() {
     updateManualProjectId();
     await loadApiKeys();
   });
-  createButton.addEventListener("click", async () => {
+  async function requestNewApiKey(path, successMessage) {
     if (!select.value) {
       showMessage("api-key-message", "Create a project first.", "error");
       return;
     }
     try {
-      const response = await api(`/api/projects/${select.value}/api-keys`, {
+      const response = await api(path, {
         method: "POST",
         body: "{}",
       });
-      document.getElementById("new-api-key").textContent = response.api_key;
+      const keyInput = document.getElementById("new-api-key");
+      keyInput.value = response.api_key;
+      keyInput.type = "password";
       const copyKeyButton = document.getElementById("copy-api-key-button");
+      const showKeyButton = document.getElementById("show-api-key-button");
       if (copyKeyButton) {
         copyKeyButton.disabled = false;
       }
-      showMessage("api-key-message", "Permanent API key created. Copy it now, then keep it secret.", "success");
+      if (showKeyButton) {
+        showKeyButton.disabled = false;
+        showKeyButton.textContent = "Show API Key";
+      }
+      showMessage("api-key-message", successMessage, "success");
       await loadApiKeys();
     } catch (error) {
       showMessage("api-key-message", error.message, "error");
     }
+  }
+  createButton.addEventListener("click", async () => {
+    await requestNewApiKey(
+      `/api/projects/${select.value}/api-keys`,
+      "API key generated. Copy it now; Matrixs will not show it again.",
+    );
+  });
+  regenerateButton?.addEventListener("click", async () => {
+    const confirmed = window.confirm("Regenerate this project's API key? All active keys for this project will be revoked.");
+    if (!confirmed) {
+      return;
+    }
+    await requestNewApiKey(
+      `/api/projects/${select.value}/api-keys/regenerate`,
+      "API key regenerated. Previous active keys were revoked. Copy the new key now.",
+    );
+  });
+  document.getElementById("show-api-key-button")?.addEventListener("click", (event) => {
+    const keyInput = document.getElementById("new-api-key");
+    const showing = keyInput.type === "text";
+    keyInput.type = showing ? "password" : "text";
+    event.currentTarget.textContent = showing ? "Show API Key" : "Hide API Key";
   });
   document.addEventListener("click", async (event) => {
     const copyButton = event.target.closest("[data-copy-target]");
     if (copyButton) {
       const target = document.getElementById(copyButton.dataset.copyTarget);
-      const value = target?.textContent.trim();
+      const value = ("value" in (target || {}) ? target.value : target?.textContent)?.trim();
       if (!value) {
         return;
       }
-      try {
-        await navigator.clipboard.writeText(value);
-        showMessage("connection-message", "Copied to clipboard.", "success");
-      } catch (_) {
-        showMessage("connection-message", "Select and copy the value shown on the page.", "success");
-      }
+      const messageId = copyButton.dataset.copyMessage || (target.id === "new-api-key" ? "api-key-message" : "connection-message");
+      await copyText(value, messageId, "Copied to clipboard.");
       return;
     }
     const button = event.target.closest("[data-delete-key]");
@@ -340,8 +379,21 @@ function initApiKeys() {
 function updateManualProjectId() {
   const select = document.getElementById("project-select");
   const output = document.getElementById("manual-project-id");
+  const name = document.getElementById("manual-project-name");
   if (output) {
     output.textContent = select?.value || "Create a project first";
+  }
+  if (name) {
+    name.textContent = select?.selectedOptions?.[0]?.textContent || "Create a project first";
+  }
+}
+
+async function copyText(value, messageId, successMessage) {
+  try {
+    await navigator.clipboard.writeText(value);
+    showMessage(messageId, successMessage, "success");
+  } catch (_) {
+    showMessage(messageId, "Select and copy the value shown on the page.", "success");
   }
 }
 

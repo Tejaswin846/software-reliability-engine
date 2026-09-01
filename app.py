@@ -191,7 +191,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.5.0")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.0")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -7464,6 +7464,62 @@ def create_project_api_key(
         "ok": True,
         "api_key": generated["api_key"],
         "message": "Copy this API key now. It will not be shown again.",
+        "key": {
+            "id": key_id,
+            "project_id": project_id,
+            "key_prefix": generated["key_prefix"],
+            "created_at": created_at,
+            "last_used_at": None,
+            "is_active": True,
+        },
+    }
+
+
+@app.post("/api/projects/{project_id}/api-keys/regenerate")
+def regenerate_project_api_key(
+    project_id: str,
+    _: APIKeyCreate = APIKeyCreate(),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    init_db()
+    generated = generate_api_key()
+    key_id = f"key_{uuid.uuid4().hex}"
+    created_at = now_iso()
+    with connect() as db:
+        project_permission_or_404(db, user["id"], project_id, "developer")
+        revoked_count = int(
+            db.execute(
+                "SELECT COUNT(*) FROM api_keys WHERE project_id = ? AND is_active = 1",
+                (project_id,),
+            ).fetchone()[0]
+        )
+        db.execute(
+            "UPDATE api_keys SET is_active = 0 WHERE project_id = ? AND is_active = 1",
+            (project_id,),
+        )
+        enforce_limit(db, user["id"], "api_keys")
+        db.execute(
+            """
+            INSERT INTO api_keys (
+                id, user_id, project_id, key_hash, key_prefix,
+                created_at, last_used_at, is_active
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+            """,
+            (
+                key_id,
+                user["id"],
+                project_id,
+                generated["key_hash"],
+                generated["key_prefix"],
+                created_at,
+            ),
+        )
+    return {
+        "ok": True,
+        "api_key": generated["api_key"],
+        "message": "Previous active API keys were revoked. Copy this new key now.",
+        "revoked_count": revoked_count,
         "key": {
             "id": key_id,
             "project_id": project_id,

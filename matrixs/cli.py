@@ -5,7 +5,7 @@ import json
 import sys
 import webbrowser
 from pathlib import Path
-from typing import Callable, Optional, Sequence
+from typing import Callable, Dict, Optional, Sequence
 
 from matrixs.client import MatrixsClient, MatrixsClientError
 from matrixs.config import (
@@ -20,11 +20,16 @@ from matrixs.connector.backup import create_backup, find_backup, latest_backup, 
 from matrixs.connector.browser_setup import collect_credentials_in_browser
 from matrixs.connector.credentials import obtain_credentials
 from matrixs.connector.discover import discover_projects, inspect_project
-from matrixs.connector.models import IntegrationPlan, ProjectCandidate
+from matrixs.connector.models import Credentials, IntegrationPlan, ProjectCandidate
 from matrixs.connector.operations import apply_plan, rollback_backup
 from matrixs.connector.permissions import request_integration_permission
 from matrixs.connector.planner import build_integration_plan
-from matrixs.connector.verify import verify_connection
+from matrixs.connector.verify import (
+    send_test_event,
+    validate_credentials,
+    verify_connection,
+    verify_local_integration,
+)
 from matrixs.runtime.launcher import run_project
 
 
@@ -40,21 +45,24 @@ def _project_label(candidate: ProjectCandidate) -> str:
     return f"{candidate.path.name:<22} Python / {framework.title()}"
 
 
-def _choose_project(candidates: Sequence[ProjectCandidate], selection: Optional[int]) -> ProjectCandidate:
+def _choose_project(
+    candidates: Sequence[ProjectCandidate],
+    selection: Optional[int],
+    *,
+    input_fn: Callable[[str], str] = input,
+) -> ProjectCandidate:
     if not candidates:
         raise CLIError("No supported Python project was found. Use --path to provide the project folder.")
     if len(candidates) == 1:
         candidate = candidates[0]
         print(f"Project found: {_project_label(candidate)}")
-        print(f"  {candidate.path}")
         return candidate
     print("Projects found:")
     for index, candidate in enumerate(candidates, start=1):
         print(f"[{index}] {_project_label(candidate)}")
-        print(f"    {candidate.path}")
     selected = selection
     while selected is None:
-        raw = input("Choose a project: ").strip()
+        raw = input_fn("Choose a project: ").strip()
         if raw.isdigit() and 1 <= int(raw) <= len(candidates):
             selected = int(raw)
         else:
@@ -76,7 +84,7 @@ def _discover_or_prompt(
     while True:
         candidates = discover_projects(search_root, max_depth=max_depth)
         if candidates:
-            return _choose_project(candidates, selection)
+            return _choose_project(candidates, selection, input_fn=input_fn)
         print("No project found.")
         if not allow_prompt:
             raise CLIError("Use --path to provide a supported Python project folder.")
@@ -119,6 +127,21 @@ def _show_plan(plan: IntegrationPlan) -> None:
         print(f"- {change.action}: {relative}{suffix}")
 
 
+def _run_progress(label: str, action: Callable[[], object]) -> object:
+    print(f"{label:<40}", end="", flush=True)
+    try:
+        result = action()
+    except Exception:
+        print("x")
+        raise
+    print("\u2713")
+    return result
+
+
+def _complete_progress(label: str) -> None:
+    print(f"{label:<40}\u2713")
+
+
 def command_connect(args: argparse.Namespace) -> int:
     if args.manual:
         print("Matrixs automatic integration was not started.")
@@ -126,7 +149,8 @@ def command_connect(args: argparse.Namespace) -> int:
         return 0
     start = Path(args.path or Path.cwd()).expanduser().resolve()
     print("Matrixs project connector")
-    print(f"Searching {start} and controlled subfolders...")
+    location = "." if start == Path.cwd().resolve() else start.name
+    print(f"Searching {location} and controlled subfolders...")
     candidate = _discover_or_prompt(
         start,
         max_depth=args.max_depth,
@@ -144,51 +168,82 @@ def command_connect(args: argparse.Namespace) -> int:
         if not allowed:
             return 0
     print("Permission granted.")
-    print("Analyzing project...")
-    analysis = analyze_project(candidate.path)
+    analysis = _run_progress("Detecting application...", lambda: analyze_project(candidate.path))
+    assert hasattr(analysis, "runtime")
     print(
         "Detected "
         f"{analysis.runtime} / {analysis.framework}; adapters: {', '.join(analysis.adapters)}"
     )
+    libraries = ", ".join(analysis.ai_libraries) or "none detected"
+    print(f"AI libraries: {libraries}")
     existing = load_project_connection(candidate.path)
-    known_project_id = args.project_id or existing.get("project_id") or ""
-    if args.token or (args.project_id and args.api_key):
-        credentials = obtain_credentials(
-            candidate.path,
-            project_id=args.project_id,
-            api_key=args.api_key,
-            api_url=args.api_url,
-            project_name=args.project_name,
-            connection_token=args.token,
-            timeout=args.timeout,
-        )
-    else:
-        credentials = collect_credentials_in_browser(
-            candidate.path,
-            project_id=known_project_id,
-            project_name=args.project_name or existing.get("project_name") or candidate.path.name,
+    if args.dry_run:
+        preview_credentials = Credentials(
+            project_id=existing.get("project_id") or "project-id-entered-in-browser",
+            api_key="secret-entered-in-browser",
             api_url=args.api_url or existing.get("api_url") or "",
-            timeout=args.setup_timeout,
+            project_name=existing.get("project_name") or candidate.path.name,
+            installation_id="installation-created-after-validation",
         )
+        preview_plan = build_integration_plan(analysis, preview_credentials, backup_id=new_backup_id())
+        _show_plan(preview_plan)
+        print("Dry run complete. No browser was opened and no files were changed.")
+        return 0
+
+    def validate_for_browser(credentials: Credentials) -> object:
+        return _run_progress(
+            "Testing Matrixs connection...",
+            lambda: validate_credentials(credentials, timeout=args.timeout),
+        )
+
+    credentials = collect_credentials_in_browser(
+        candidate.path,
+        project_id=existing.get("project_id") or "",
+        project_name=existing.get("project_name") or candidate.path.name,
+        api_url=args.api_url or existing.get("api_url") or "",
+        timeout=args.setup_timeout,
+        validator=validate_for_browser,
+    )
+    _complete_progress("Credentials received...")
     backup_id = new_backup_id()
     plan = build_integration_plan(analysis, credentials, backup_id=backup_id)
     _show_plan(plan)
-    if args.dry_run:
-        print("Dry run complete. No files were changed.")
-        return 0
-    backup_dir = create_backup(plan.project_root, plan.changes, backup_id)
-    print(f"Backup created: {backup_dir.relative_to(plan.project_root)}")
+    backup_dir = _run_progress(
+        "Creating backup...",
+        lambda: create_backup(plan.project_root, plan.changes, backup_id),
+    )
+    assert isinstance(backup_dir, Path)
+    runtime_changes = [
+        change
+        for change in plan.changes
+        if change.path.relative_to(plan.project_root).parts[:2] == (".matrixs", "runtime")
+    ]
+    configuration_changes = [change for change in plan.changes if change not in runtime_changes]
     try:
-        changed = apply_plan(plan)
-        print(f"Applied {len(changed)} Matrixs integration change(s).")
-        verification = None if args.no_verify else verify_connection(credentials, timeout=args.timeout)
+        runtime_changed = _run_progress(
+            "Adding Matrixs integration...",
+            lambda: apply_plan(plan, runtime_changes),
+        )
+        configuration_changed = _run_progress(
+            "Saving configuration...",
+            lambda: apply_plan(plan, configuration_changes),
+        )
+
+        def verify_instrumentation() -> Dict[str, object]:
+            local = verify_local_integration(plan)
+            event = send_test_event(credentials, timeout=args.timeout)
+            return {"local": local, "test_event": event}
+
+        verification = _run_progress("Testing instrumentation...", verify_instrumentation)
     except Exception:
         rollback_backup(plan.project_root, backup_dir)
         print("Integration failed. Matrixs restored the project from its backup.", file=sys.stderr)
         raise
+    changed_count = len(runtime_changed) + len(configuration_changed)
     print(f"{credentials.project_name} is connected to Matrixs.")
+    print(f"Applied {changed_count} reversible Matrixs integration change(s).")
     print("Start the application with: matrixs run")
-    if verification:
+    if isinstance(verification, dict):
         test_event = verification.get("test_event") or {}
         print(f"Connection test passed: {test_event.get('workflow_id', 'verified')}")
     return 0
@@ -255,11 +310,9 @@ def command_run(args: argparse.Namespace) -> int:
 
 def command_login(args: argparse.Namespace) -> int:
     api_url = (args.api_url or input("Matrixs API URL: ").strip()).rstrip("/")
-    api_key = args.api_key
-    if not api_key:
-        import getpass
+    import getpass
 
-        api_key = getpass.getpass("Matrixs API Key: ").strip()
+    api_key = getpass.getpass("Matrixs API Key: ").strip()
     if not api_url or not api_key:
         raise CLIError("API URL and API key are required.")
     project_id = args.project_id
@@ -311,14 +364,9 @@ def build_parser() -> argparse.ArgumentParser:
     connect.add_argument("--max-depth", type=int, default=3, help="Maximum controlled subfolder search depth.")
     connect.add_argument("--yes", action="store_true", help="Grant integration permission non-interactively.")
     connect.add_argument("--manual", action="store_true", help="Open the manual integration guide without changing files.")
-    connect.add_argument("--project-id", help="Matrixs Cloud project ID.")
-    connect.add_argument("--project-name", help="Display name for the connected project.")
     connect.add_argument("--api-url", help="Matrixs Cloud API base URL.")
-    connect.add_argument("--api-key", help="Matrixs API key. Prefer MATRIXS_API_KEY or the masked prompt.")
-    connect.add_argument("--token", help="Short-lived one-time connection token generated by Matrixs Cloud.")
     connect.add_argument("--timeout", type=float, default=10.0)
     connect.add_argument("--setup-timeout", type=float, default=600.0, help="Seconds to wait for the local credential page.")
-    connect.add_argument("--no-verify", action="store_true", help="Skip the Matrixs Cloud connection test.")
     connect.add_argument("--dry-run", action="store_true", help="Show the integration plan without changing files.")
     connect.set_defaults(func=command_connect)
 
@@ -345,7 +393,6 @@ def build_parser() -> argparse.ArgumentParser:
     login.add_argument("--api-url")
     login.add_argument("--project-id")
     login.add_argument("--project-name")
-    login.add_argument("--api-key")
     login.add_argument("--timeout", type=float, default=10.0)
     login.set_defaults(func=command_login)
 

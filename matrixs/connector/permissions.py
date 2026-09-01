@@ -23,17 +23,17 @@ def request_integration_permission(
     input_fn: InputFunction = input,
     open_manual_guide: Callable[[], None],
 ) -> bool:
-    print(f'Matrixs needs permission to configure "{project_root.name}".')
+    print("Matrixs needs permission to automatically integrate with this project.")
+    print(f'Project: "{project_root.name}"')
     print("Matrixs may:")
     print("- create Matrixs configuration files")
-    print("- update required startup/deployment configuration")
-    print("- add runtime instrumentation configuration")
-    print("- open a secure local page for your Project ID and API key")
-    print("- save those credentials in a git-ignored local file")
-    print("- create backups before changes")
+    print("- add required Matrixs integration/runtime code")
+    print("- update startup configuration when necessary")
+    print("- save Matrixs configuration")
+    print("- create a backup before making changes")
     print("Matrixs will not modify unrelated files.")
     while True:
-        if ask_yes_no("Allow Matrixs to make these changes?", input_fn=input_fn):
+        if ask_yes_no("Allow Matrixs to modify this project?", input_fn=input_fn):
             return True
         if ask_yes_no("Do you want to integrate Matrixs manually instead?", input_fn=input_fn):
             open_manual_guide()
