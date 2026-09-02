@@ -81,6 +81,8 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertIn("Matrixs", projects_page.text)
         self.assertNotIn("<span>Software</span>", projects_page.text)
         self.assertIn("Copy Project ID", self.client.get("/saas.js").text)
+        self.assertIn('keyInput.type = "text"', self.client.get("/saas.js").text)
+        self.assertIn("That project no longer exists", self.client.get("/saas.js").text)
         self.assertNotIn("Show my API key", install.text)
         self.assertIn("pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git", docs.json()["install"]["python"])
         self.assertIn("supports Python 3.10+", docs.json()["install"]["node"])
@@ -161,6 +163,26 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertIsNotNone(project)
         self.assertEqual(project["name"], "simple-agent")
         self.assertEqual(active_key_count, 1)
+
+    def test_successful_key_creation_is_snapshotted_for_future_deployments(self):
+        with patch.object(
+            app,
+            "verify_clerk_token",
+            return_value={"sub": "user_persist", "email": "persist@example.com"},
+        ), patch.object(app, "supabase_upsert_user_profile", return_value={"ok": True}), patch.object(
+            app,
+            "redis_save_sqlite_snapshot",
+            return_value={"ok": True, "stored": True},
+        ) as snapshot:
+            response = self.client.post(
+                "/api/install/api-key",
+                headers={"Authorization": "Bearer clerk-token"},
+                json={"project_name": "durable-agent"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["X-Matrixs-Persistence"], "stored")
+        snapshot.assert_called_once_with(app.DB_PATH)
 
     def test_signed_in_install_endpoint_replaces_existing_active_keys(self):
         with patch.object(

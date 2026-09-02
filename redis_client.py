@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import base64
 import hashlib
+import hmac
 import json
 import logging
 import os
+from pathlib import Path
+import sqlite3
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+import zlib
+from contextlib import closing, contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional
 from urllib.parse import urlparse
 
@@ -31,6 +36,10 @@ EXECUTION_STATE_TTL_SECONDS = int(
     os.getenv("SOFTWARE_AI_EXECUTION_STATE_TTL_SECONDS", "1800")
 )
 QUEUE_MAX_LENGTH = int(os.getenv("SOFTWARE_REDIS_QUEUE_MAX_LENGTH", "10000"))
+DATABASE_SNAPSHOT_MAX_BYTES = max(
+    1024 * 1024,
+    int(os.getenv("SOFTWARE_REDIS_DATABASE_SNAPSHOT_MAX_BYTES", str(8 * 1024 * 1024))),
+)
 SDK_RETRIES = max(0, int(os.getenv("SOFTWARE_REDIS_RETRIES", "2")))
 SDK_RETRY_INTERVAL = max(
     0.0, float(os.getenv("SOFTWARE_REDIS_RETRY_INTERVAL_SECONDS", "0.25"))
@@ -258,6 +267,101 @@ def redis_health_check() -> Dict[str, Any]:
         "operation_failures": metrics["operation_failures"],
         "reconnects": metrics["reconnects"],
     }
+
+
+def save_sqlite_snapshot(path: Path) -> Dict[str, Any]:
+    """Save a consistent compressed SQLite snapshot to durable Redis storage."""
+
+    source = Path(path)
+    if not source.is_file():
+        return {"ok": False, "stored": False, "error": "Database file does not exist."}
+    if not _configured():
+        return {"ok": False, "stored": False, "error": "Redis is not configured."}
+    temporary = source.with_name(f".{source.name}.{uuid.uuid4().hex}.snapshot")
+    try:
+        with closing(sqlite3.connect(source, timeout=30)) as database, closing(
+            sqlite3.connect(temporary)
+        ) as snapshot:
+            database.backup(snapshot)
+        serialized = temporary.read_bytes()
+        compressed = zlib.compress(serialized, level=9)
+        if len(compressed) > DATABASE_SNAPSHOT_MAX_BYTES:
+            return {
+                "ok": False,
+                "stored": False,
+                "error": "Compressed database snapshot exceeds the configured size limit.",
+            }
+        payload = _json_dumps(
+            {
+                "version": 1,
+                "created_at": time.time(),
+                "sha256": hashlib.sha256(serialized).hexdigest(),
+                "data": base64.b64encode(compressed).decode("ascii"),
+            }
+        )
+        stored = _run(
+            "database snapshot save",
+            lambda client: client.set(_key("persistence", "sqlite", "api", "v1"), payload),
+            default=None,
+        )
+    except (OSError, sqlite3.Error, ValueError, zlib.error) as error:
+        LOGGER.warning("Could not create database snapshot: %s", error.__class__.__name__)
+        return {"ok": False, "stored": False, "error": "Could not create database snapshot."}
+    finally:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+    if stored is None:
+        return {"ok": False, "stored": False, "error": "Redis did not store the database snapshot."}
+    return {
+        "ok": True,
+        "stored": True,
+        "bytes": len(serialized),
+        "compressed_bytes": len(compressed),
+    }
+
+
+def restore_sqlite_snapshot(path: Path) -> Dict[str, Any]:
+    """Restore a verified SQLite snapshot before the application opens the database."""
+
+    target = Path(path)
+    if not _configured():
+        return {"ok": True, "restored": False, "reason": "redis_not_configured"}
+    payload = _run(
+        "database snapshot restore",
+        lambda client: client.get(_key("persistence", "sqlite", "api", "v1")),
+        default=None,
+    )
+    if not payload:
+        return {"ok": True, "restored": False, "reason": "snapshot_not_found"}
+    temporary = target.with_name(f".{target.name}.{uuid.uuid4().hex}.restore")
+    try:
+        envelope = _json_loads(payload, default={})
+        if not isinstance(envelope, dict) or envelope.get("version") != 1:
+            raise ValueError("Unsupported database snapshot format.")
+        compressed = base64.b64decode(str(envelope.get("data") or ""), validate=True)
+        serialized = zlib.decompress(compressed)
+        expected_hash = str(envelope.get("sha256") or "")
+        if not expected_hash or not hmac.compare_digest(
+            hashlib.sha256(serialized).hexdigest(), expected_hash
+        ):
+            raise ValueError("Database snapshot checksum does not match.")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary.write_bytes(serialized)
+        with closing(sqlite3.connect(temporary)) as database:
+            quick_check = database.execute("PRAGMA quick_check").fetchone()
+        if not quick_check or str(quick_check[0]).lower() != "ok":
+            raise ValueError("Database snapshot failed SQLite integrity validation.")
+        os.replace(temporary, target)
+    except (OSError, sqlite3.Error, ValueError, zlib.error) as error:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
+        LOGGER.warning("Could not restore database snapshot: %s", error.__class__.__name__)
+        return {"ok": False, "restored": False, "error": "Stored database snapshot is invalid."}
+    return {"ok": True, "restored": True, "bytes": len(serialized)}
 
 
 def _ai_cache_key(user_id: str, prompt: str, model: Optional[str] = None) -> str:

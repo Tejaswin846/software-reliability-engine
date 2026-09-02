@@ -139,6 +139,8 @@ try:
         get_session_cache as redis_get_session_cache,
         initialize_redis,
         redis_health_check,
+        restore_sqlite_snapshot as redis_restore_sqlite_snapshot,
+        save_sqlite_snapshot as redis_save_sqlite_snapshot,
         set_execution_state as redis_set_execution_state,
         set_conversation_state as redis_set_conversation_state,
         set_session_cache as redis_set_session_cache,
@@ -156,6 +158,8 @@ except ImportError:
         get_session_cache as redis_get_session_cache,
         initialize_redis,
         redis_health_check,
+        restore_sqlite_snapshot as redis_restore_sqlite_snapshot,
+        save_sqlite_snapshot as redis_save_sqlite_snapshot,
         set_execution_state as redis_set_execution_state,
         set_conversation_state as redis_set_conversation_state,
         set_session_cache as redis_set_session_cache,
@@ -191,7 +195,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.2")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.3")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -249,6 +253,7 @@ DB_PATH = Path(os.getenv("SOFTWARE_API_DB_PATH", DATA_DIR / "software_reliabilit
 SQLITE_BUSY_TIMEOUT_MS = max(1000, int(os.getenv("SOFTWARE_SQLITE_BUSY_TIMEOUT_MS", "30000")))
 SERVICE_STARTED_AT = datetime.now(timezone.utc)
 STARTUP_CHECKS: Dict[str, Any] = {}
+DATABASE_PERSISTENCE: Dict[str, Any] = {"ok": True, "restored": False, "reason": "not_started"}
 LOGGER = logging.getLogger("software.app")
 _DB_INIT_LOCK = threading.Lock()
 _INITIALIZED_DATABASES: set[str] = set()
@@ -5531,14 +5536,23 @@ def record_resumed_integration_action(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    global DATABASE_PERSISTENCE
     monitoring = initialize_sentry()
     if monitoring["configured"] and not monitoring["initialized"]:
         LOGGER.error(
             "Sentry is configured but failed to initialize: %s", monitoring["error"]
         )
     initialize_redis()
+    DATABASE_PERSISTENCE = redis_restore_sqlite_snapshot(DB_PATH)
+    if DATABASE_PERSISTENCE.get("restored"):
+        _INITIALIZED_DATABASES.discard(os.path.abspath(os.fspath(DB_PATH)))
     initialize_composio()
     run_startup_checks()
+    if not DATABASE_PERSISTENCE.get("restored"):
+        DATABASE_PERSISTENCE = {
+            **DATABASE_PERSISTENCE,
+            "initial_snapshot": redis_save_sqlite_snapshot(DB_PATH),
+        }
     worker = None
     worker_thread = None
     if os.getenv("SOFTWARE_OUTBOX_WORKER_ENABLED", "true").lower() not in {
@@ -5634,6 +5648,46 @@ app.include_router(
         require_sdk_api_key=require_sdk_api_key,
     )
 )
+
+
+PERSISTED_CONTROL_PLANE_PREFIXES = (
+    "/auth",
+    "/api/billing",
+    "/api/install",
+    "/api/organizations",
+    "/api/projects",
+    "/api/sdk/connect",
+    "/api/sdk/installations",
+)
+
+
+def should_persist_control_plane(request: Request, response: Response) -> bool:
+    return (
+        request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}
+        and 200 <= response.status_code < 400
+        and request.url.path.startswith(PERSISTED_CONTROL_PLANE_PREFIXES)
+    )
+
+
+@app.middleware("http")
+async def persist_control_plane_database(request: Request, call_next):
+    global DATABASE_PERSISTENCE
+    response = await call_next(request)
+    if should_persist_control_plane(request, response):
+        snapshot = redis_save_sqlite_snapshot(DB_PATH)
+        DATABASE_PERSISTENCE = {
+            **DATABASE_PERSISTENCE,
+            "last_snapshot": snapshot,
+            "last_snapshot_at": now_iso(),
+        }
+        response.headers["X-Matrixs-Persistence"] = "stored" if snapshot.get("stored") else "degraded"
+        if not snapshot.get("ok"):
+            LOGGER.error(
+                "Matrixs control-plane database snapshot failed after %s %s",
+                request.method,
+                request.url.path,
+            )
+    return response
 
 
 @app.middleware("http")
@@ -5797,6 +5851,7 @@ def status(response: Response) -> Dict[str, Any]:
         "monitoring": monitoring,
         "composio": composio_status,
         "redis": redis_status,
+        "database_persistence": DATABASE_PERSISTENCE,
         "startup_checks": checks,
     }
 
@@ -7449,26 +7504,42 @@ def create_project_api_key(
     generated = generate_api_key()
     key_id = f"key_{uuid.uuid4().hex}"
     created_at = now_iso()
-    with connect() as db:
-        project_permission_or_404(db, user["id"], project_id, "developer")
-        enforce_limit(db, user["id"], "api_keys")
-        db.execute(
-            """
-            INSERT INTO api_keys (
-                id, user_id, project_id, key_hash, key_prefix,
-                created_at, last_used_at, is_active
+    try:
+        with connect() as db:
+            project_permission_or_404(db, user["id"], project_id, "developer")
+            enforce_limit(db, user["id"], "api_keys")
+            db.execute(
+                """
+                INSERT INTO api_keys (
+                    id, user_id, project_id, key_hash, key_prefix,
+                    created_at, last_used_at, is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                """,
+                (
+                    key_id,
+                    user["id"],
+                    project_id,
+                    generated["key_hash"],
+                    generated["key_prefix"],
+                    created_at,
+                ),
             )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
-            """,
-            (
-                key_id,
-                user["id"],
-                project_id,
-                generated["key_hash"],
-                generated["key_prefix"],
-                created_at,
-            ),
+    except HTTPException:
+        raise
+    except sqlite3.Error as error:
+        LOGGER.exception("Project API key creation failed for project %s", project_id)
+        capture_operational_error(
+            error,
+            category="api_key_creation_failure",
+            user_id=user["id"],
+            project_id=project_id,
+            operation="create_project_api_key",
         )
+        raise HTTPException(
+            status_code=503,
+            detail="Matrixs could not save the API key. Please retry in a moment.",
+        ) from error
     return {
         "ok": True,
         "api_key": generated["api_key"],
@@ -7494,36 +7565,52 @@ def regenerate_project_api_key(
     generated = generate_api_key()
     key_id = f"key_{uuid.uuid4().hex}"
     created_at = now_iso()
-    with connect() as db:
-        project_permission_or_404(db, user["id"], project_id, "developer")
-        revoked_count = int(
-            db.execute(
-                "SELECT COUNT(*) FROM api_keys WHERE project_id = ? AND is_active = 1",
-                (project_id,),
-            ).fetchone()[0]
-        )
-        db.execute(
-            "UPDATE api_keys SET is_active = 0 WHERE project_id = ? AND is_active = 1",
-            (project_id,),
-        )
-        enforce_limit(db, user["id"], "api_keys")
-        db.execute(
-            """
-            INSERT INTO api_keys (
-                id, user_id, project_id, key_hash, key_prefix,
-                created_at, last_used_at, is_active
+    try:
+        with connect() as db:
+            project_permission_or_404(db, user["id"], project_id, "developer")
+            revoked_count = int(
+                db.execute(
+                    "SELECT COUNT(*) FROM api_keys WHERE project_id = ? AND is_active = 1",
+                    (project_id,),
+                ).fetchone()[0]
             )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
-            """,
-            (
-                key_id,
-                user["id"],
-                project_id,
-                generated["key_hash"],
-                generated["key_prefix"],
-                created_at,
-            ),
+            db.execute(
+                "UPDATE api_keys SET is_active = 0 WHERE project_id = ? AND is_active = 1",
+                (project_id,),
+            )
+            enforce_limit(db, user["id"], "api_keys")
+            db.execute(
+                """
+                INSERT INTO api_keys (
+                    id, user_id, project_id, key_hash, key_prefix,
+                    created_at, last_used_at, is_active
+                )
+                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                """,
+                (
+                    key_id,
+                    user["id"],
+                    project_id,
+                    generated["key_hash"],
+                    generated["key_prefix"],
+                    created_at,
+                ),
+            )
+    except HTTPException:
+        raise
+    except sqlite3.Error as error:
+        LOGGER.exception("Project API key regeneration failed for project %s", project_id)
+        capture_operational_error(
+            error,
+            category="api_key_creation_failure",
+            user_id=user["id"],
+            project_id=project_id,
+            operation="regenerate_project_api_key",
         )
+        raise HTTPException(
+            status_code=503,
+            detail="Matrixs could not regenerate the API key. Please retry in a moment.",
+        ) from error
     return {
         "ok": True,
         "api_key": generated["api_key"],

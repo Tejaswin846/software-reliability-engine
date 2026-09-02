@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from contextlib import closing
 import json
+from pathlib import Path
+import sqlite3
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -252,6 +256,49 @@ class RedisClientTests(unittest.TestCase):
         self.assertTrue(limit["allowed"])
         self.assertTrue(lock["acquired"])
         self.assertTrue(lock["degraded"])
+
+    def test_sqlite_snapshot_survives_database_replacement(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "matrixs.db"
+            with closing(sqlite3.connect(database_path)) as database:
+                database.execute("CREATE TABLE projects (id TEXT PRIMARY KEY, name TEXT NOT NULL)")
+                database.execute("INSERT INTO projects (id, name) VALUES ('prj_saved', 'Saved project')")
+                database.commit()
+
+            saved = redis_client.save_sqlite_snapshot(database_path)
+            database_path.unlink()
+            with closing(sqlite3.connect(database_path)) as database:
+                database.execute("CREATE TABLE replacement (id TEXT PRIMARY KEY)")
+                database.commit()
+
+            restored = redis_client.restore_sqlite_snapshot(database_path)
+            with closing(sqlite3.connect(database_path)) as database:
+                row = database.execute("SELECT id, name FROM projects").fetchone()
+
+        self.assertTrue(saved["stored"])
+        self.assertTrue(restored["restored"])
+        self.assertEqual(row, ("prj_saved", "Saved project"))
+
+    def test_invalid_sqlite_snapshot_never_overwrites_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "matrixs.db"
+            with closing(sqlite3.connect(database_path)) as database:
+                database.execute("CREATE TABLE current_state (id TEXT PRIMARY KEY)")
+                database.execute("INSERT INTO current_state (id) VALUES ('safe')")
+                database.commit()
+
+            redis_client.save_sqlite_snapshot(database_path)
+            snapshot_key = redis_client._key("persistence", "sqlite", "api", "v1")
+            envelope = json.loads(self.fake.values[snapshot_key])
+            envelope["sha256"] = "0" * 64
+            self.fake.values[snapshot_key] = json.dumps(envelope)
+
+            restored = redis_client.restore_sqlite_snapshot(database_path)
+            with closing(sqlite3.connect(database_path)) as database:
+                row = database.execute("SELECT id FROM current_state").fetchone()
+
+        self.assertFalse(restored["restored"])
+        self.assertEqual(row, ("safe",))
 
 
 if __name__ == "__main__":

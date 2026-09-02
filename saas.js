@@ -311,7 +311,9 @@ function initApiKeys() {
       });
       const keyInput = document.getElementById("new-api-key");
       keyInput.value = response.api_key;
-      keyInput.type = "password";
+      keyInput.type = "text";
+      keyInput.focus();
+      keyInput.select();
       const copyKeyButton = document.getElementById("copy-api-key-button");
       const showKeyButton = document.getElementById("show-api-key-button");
       if (copyKeyButton) {
@@ -319,11 +321,21 @@ function initApiKeys() {
       }
       if (showKeyButton) {
         showKeyButton.disabled = false;
-        showKeyButton.textContent = "Show API Key";
+        showKeyButton.textContent = "Hide API Key";
       }
       showMessage("api-key-message", successMessage, "success");
       await loadApiKeys();
     } catch (error) {
+      if (error.status === 404) {
+        window.history.replaceState({}, "", "/api-keys");
+        await loadProjects();
+        showMessage(
+          "api-key-message",
+          "That project no longer exists. Create or select a project, then generate the API key again.",
+          "error",
+        );
+        return;
+      }
       showMessage("api-key-message", error.message, "error");
     }
   }
