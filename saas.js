@@ -399,10 +399,10 @@ async function copyText(value, messageId, successMessage) {
 
 function installCommandText(kind) {
   if (kind === "pypi") {
-    return "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git";
+    return "pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git";
   }
   if (kind === "github") {
-    return "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git";
+    return "pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git";
   }
   if (kind === "local") {
     return "pip install -e .";

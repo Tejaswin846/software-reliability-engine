@@ -28,7 +28,7 @@
         <div class="row">
           <div>
             <h1>Connect a project to Matrixs</h1>
-            <p class="muted">Install Matrixs, then run one clean command beside your Python project. The CLI asks permission and opens a secure local page for your Project ID and API key.</p>
+            <p class="muted">Install or update Matrixs, then run one clean command beside your Python project. The CLI asks permission and opens a secure local page for your Project ID and API key.</p>
           </div>
           <a class="button secondary" href="/dashboard">View Dashboard</a>
         </div>
@@ -44,10 +44,10 @@
         <div class="setup-command-grid">
           <article class="card stack setup-command-card">
             <div class="row">
-              <div><span class="step-number">1</span><h2>SDK installation</h2></div>
+              <div><span class="step-number">1</span><h2>Install or update Matrixs</h2></div>
               <button type="button" class="secondary" data-copy-target="install-command-github">Copy install command</button>
             </div>
-            <pre id="install-command-github" class="code-snippet">pip install git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
+            <pre id="install-command-github" class="code-snippet">pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git</pre>
           </article>
           <article class="card stack setup-command-card">
             <div class="row">
@@ -96,7 +96,7 @@
       <section class="panel stack">
         <h2>Step-by-step setup</h2>
         <div class="install-steps">
-          <article class="card"><h2>1. Install Matrixs</h2><p class="muted">Install the Python package once.</p></article>
+          <article class="card"><h2>1. Install or update Matrixs</h2><p class="muted">Install the current Matrixs CLI, or upgrade an existing installation.</p></article>
           <article class="card"><h2>2. Run matrixs connect</h2><p class="muted">Matrixs discovers the Python project and asks for permission.</p></article>
           <article class="card"><h2>3. Choose automatic or manual</h2><p class="muted">Approve Matrixs changes or open the manual guide. Nothing is changed before permission.</p></article>
           <article class="card"><h2>4. Enter credentials</h2><p class="muted">The local setup page asks for Project ID and API key without putting either in the command.</p></article>
@@ -107,6 +107,6 @@
     </main>
 
     <script src="/auth.js"></script>
-    <script src="/saas.js?v=20260901a"></script>
+    <script src="/saas.js?v=20260902a"></script>
   </body>
 </html>

@@ -255,7 +255,7 @@ Matrixs gives developers the reliability layer around those agents.
 Install Matrixs:
 
 ```bash
-pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
+pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
 Run the secret-free connection command beside the Python project:

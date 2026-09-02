@@ -191,7 +191,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.1")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.2")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -7277,7 +7277,7 @@ def create_install_api_key(
             "replaced_existing_keys": replaced_existing_keys,
         },
         "commands": {
-            "install": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
+            "install": "pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git",
             "login": login_command,
             "env": f"MATRIXS_API_KEY={generated['api_key']}",
             "test": "matrixs status",
@@ -8253,9 +8253,9 @@ def api_sdk_docs() -> Dict[str, Any]:
         "auth_required_for_install": False,
         "auth_required_for_docs": False,
         "install": {
-            "python": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
+            "python": "pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git",
             "node": "Matrixs zero-code connector currently supports Python 3.10+",
-            "github": "pip install git+https://github.com/Tejaswin846/software-reliability-engine.git",
+            "github": "pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git",
             "local": "pip install -e .",
         },
         "public_local_mode": [

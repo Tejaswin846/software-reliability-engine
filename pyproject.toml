@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "matrixs"
-version = "0.6.1"
+version = "0.6.2"
 description = "Matrixs zero-code integration and AI-agent reliability monitoring SDK."
 requires-python = ">=3.10"
 readme = "SDK_INTEGRATION_GUIDE.md"

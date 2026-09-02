@@ -6,7 +6,7 @@ dashboard without requiring source-code instrumentation or putting credentials i
 ## Install
 
 ```bash
-pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
+pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
 Local repo development:

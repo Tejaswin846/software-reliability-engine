@@ -57,7 +57,9 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertEqual(projects_page.status_code, 200)
         self.assertEqual(sdk.status_code, 200)
         self.assertEqual(docs.status_code, 200)
-        self.assertIn("pip install git+https://github.com/Tejaswin846/software-reliability-engine.git", install.text)
+        install_command = "pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git"
+        self.assertIn(install_command, install.text)
+        self.assertIn(install_command, onboarding.text)
         self.assertIn("Project Connection", install.text)
         self.assertIn("Open Project Connection", install.text)
         self.assertIn(">matrixs connect<", install.text)
@@ -80,7 +82,7 @@ class ClerkPublicSDKTests(unittest.TestCase):
         self.assertNotIn("<span>Software</span>", projects_page.text)
         self.assertIn("Copy Project ID", self.client.get("/saas.js").text)
         self.assertNotIn("Show my API key", install.text)
-        self.assertIn("pip install git+https://github.com/Tejaswin846/software-reliability-engine.git", docs.json()["install"]["python"])
+        self.assertIn("pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git", docs.json()["install"]["python"])
         self.assertIn("supports Python 3.10+", docs.json()["install"]["node"])
         self.assertFalse(docs.json()["auth_required_for_install"])
 

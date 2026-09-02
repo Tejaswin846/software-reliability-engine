@@ -3,7 +3,7 @@
 ## 1. Install Matrixs
 
 ```bash
-pip install git+https://github.com/Tejaswin846/software-reliability-engine.git
+pip install --upgrade git+https://github.com/Tejaswin846/software-reliability-engine.git
 ```
 
 No sign-in is required for install, docs, local validation, local plans, dry-run
