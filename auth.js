@@ -433,7 +433,8 @@
     };
   }
 
-  installDashboardFetchFallback();
+  // Authenticated reliability views must never fall back to mixed global
+  // telemetry. The dashboard displays a clear sign-in or empty-project state.
 
   window.SoftwareAuth = {
     request,

@@ -169,98 +169,85 @@ function initPasswordUpdate() {
   });
 }
 
+function formatProjectDate(value) {
+  if (!value) return "No activity yet";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 90) return "Now";
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hr ago`;
+  return date.toLocaleDateString();
+}
+
 async function loadProjects() {
   const list = document.getElementById("project-list");
   const select = document.getElementById("project-select");
-  if (!list && !select) {
-    return;
-  }
+  const currentSelect = document.getElementById("current-project-select");
+  if (!list && !select && !currentSelect) return;
   const response = await api("/api/projects");
   if (list) {
-    list.innerHTML = response.projects.length
-      ? response.projects.map((project) => `
-          <article class="card">
-            <div class="row">
-              <div>
-                <h2>${escapeHtml(project.name)}</h2>
-                <span class="field-label">Project ID</span>
-                <code>${escapeHtml(project.id)}</code>
-                <p class="muted">${project.workflow_count || 0} workflows - ${project.api_key_count || 0} active keys</p>
-              </div>
-              <div class="nav">
-                <button class="secondary" data-copy-value="${escapeHtml(project.id)}">Copy Project ID</button>
-                <a class="button secondary" href="/api-keys?project=${encodeURIComponent(project.id)}">Connect</a>
-                <button class="danger" data-delete-project="${escapeHtml(project.id)}">Delete</button>
-              </div>
-            </div>
-          </article>
-        `).join("")
-      : `<div class="card muted">No projects yet. Create one to connect an agent.</div>`;
+    list.innerHTML = response.projects.length ? response.projects.map((project) => `
+      <article class="project-card ${project.is_current ? "current" : ""} ${project.status === "archived" ? "archived" : ""}">
+        <header><div><span class="status-badge status-${escapeHtml(project.status)}"><i></i>${escapeHtml(project.status)}</span><h2><a href="/projects/${encodeURIComponent(project.id)}">${escapeHtml(project.name)}</a></h2></div>${project.is_current ? '<span class="current-chip">Current</span>' : ""}</header>
+        <code>${escapeHtml(project.id)}</code>
+        <dl class="project-facts">
+          <div><dt>Device</dt><dd>${escapeHtml(project.device_label || "No installation")}</dd></div><div><dt>Environment</dt><dd>${escapeHtml(project.environment || "Development")}</dd></div>
+          <div><dt>Workflows</dt><dd>${Number(project.workflow_count || 0).toLocaleString()}</dd></div><div><dt>Reliability</dt><dd>${Number(project.reliability_score || 0).toFixed(1)}%</dd></div>
+          <div><dt>Last activity</dt><dd>${formatProjectDate(project.last_activity_at)}</dd></div><div><dt>Installations</dt><dd>${Number(project.connected_installation_count || 0)} connected</dd></div>
+          <div><dt>Created</dt><dd>${formatProjectDate(project.created_at)}</dd></div>
+        </dl>
+        <footer><a class="button secondary" href="/projects/${encodeURIComponent(project.id)}">View details</a><button class="secondary" data-copy-value="${escapeHtml(project.id)}">Copy Project ID</button>${project.status !== "archived" ? `<button class="secondary" data-select-project="${escapeHtml(project.id)}">Make current</button><button class="secondary" data-archive-project="${escapeHtml(project.id)}">Archive</button>` : `<button class="secondary" data-unarchive-project="${escapeHtml(project.id)}">Restore</button>`}<button class="danger" data-delete-project="${escapeHtml(project.id)}">Delete</button></footer>
+      </article>`).join("") : `<div class="empty-state"><h2>You haven't connected any projects yet.</h2><p>Create a project above or open Setup to connect your application.</p><a class="button" href="/onboarding">Open setup</a></div>`;
+    const count = document.getElementById("project-count");
+    if (count) count.textContent = `${response.projects.length} project${response.projects.length === 1 ? "" : "s"}`;
+  }
+  if (currentSelect) {
+    const selectable = response.projects.filter((project) => project.status !== "archived");
+    currentSelect.innerHTML = selectable.length ? selectable.map((project) => `<option value="${escapeHtml(project.id)}" ${project.is_current ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("") : '<option value="">No projects</option>';
+    const current = response.current_project;
+    document.getElementById("current-project-name").textContent = current?.name || "No project selected";
+    document.getElementById("current-project-meta").textContent = current ? `${String(current.status).toUpperCase()} · ${current.device_label || "No installation"} · ${current.environment || "Development"}` : "Create or connect a project to begin.";
   }
   if (select) {
-    const hasProjects = response.projects.length > 0;
-    select.innerHTML = hasProjects
-      ? response.projects.map((project) => (
-        `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`
-      )).join("")
-      : `<option value="">Create a project first</option>`;
-    const keyButton = document.getElementById("create-key-button");
-    const regenerateButton = document.getElementById("regenerate-key-button");
-    const emptyProjectHelp = document.getElementById("empty-project-help");
-    if (keyButton) {
-      keyButton.disabled = !hasProjects;
-    }
-    if (regenerateButton) {
-      regenerateButton.disabled = !hasProjects;
-    }
-    if (emptyProjectHelp) {
-      emptyProjectHelp.hidden = hasProjects;
-    }
-    const query = new URLSearchParams(window.location.search);
-    const selected = query.get("project");
-    if (selected) {
-      select.value = selected;
-    }
-    updateManualProjectId();
-    await loadApiKeys();
+    const activeProjects = response.projects.filter((project) => project.status !== "archived");
+    const hasProjects = activeProjects.length > 0;
+    select.innerHTML = hasProjects ? activeProjects.map((project) => `<option value="${escapeHtml(project.id)}">${escapeHtml(project.name)}</option>`).join("") : '<option value="">Create a project first</option>';
+    ["create-key-button", "regenerate-key-button"].forEach((id) => { const button = document.getElementById(id); if (button) button.disabled = !hasProjects; });
+    const help = document.getElementById("empty-project-help"); if (help) help.hidden = hasProjects;
+    const selected = new URLSearchParams(window.location.search).get("project"); if (selected) select.value = selected;
+    updateManualProjectId(); await loadApiKeys();
   }
 }
 
 function initProjects() {
   const form = document.getElementById("project-form");
-  if (!form) {
-    return;
-  }
+  if (!form) return;
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await api("/api/projects", {
-        method: "POST",
-        body: JSON.stringify({ name: form.name.value }),
-      });
-      form.reset();
-      showMessage("project-message", "Project created.", "success");
-      await loadProjects();
-    } catch (error) {
-      showMessage("project-message", error.message, "error");
-    }
+      await api("/api/projects", { method: "POST", body: JSON.stringify({ name: form.name.value, environment: form.environment?.value || "development" }) });
+      form.reset(); showMessage("project-message", "Project created.", "success"); await loadProjects();
+    } catch (error) { showMessage("project-message", error.message, "error"); }
+  });
+  document.getElementById("current-project-select")?.addEventListener("change", async (event) => {
+    if (!event.target.value) return;
+    try { await api("/api/projects/current", { method: "POST", body: JSON.stringify({ project_id: event.target.value }) }); await loadProjects(); }
+    catch (error) { showMessage("project-message", error.message, "error"); }
   });
   document.addEventListener("click", async (event) => {
     const copyButton = event.target.closest("[data-copy-value]");
-    if (copyButton) {
-      await copyText(copyButton.dataset.copyValue, "project-message", "Project ID copied.");
-      return;
-    }
-    const button = event.target.closest("[data-delete-project]");
-    if (!button) {
-      return;
-    }
+    if (copyButton) { await copyText(copyButton.dataset.copyValue, "project-message", "Project ID copied."); return; }
+    const selectButton = event.target.closest("[data-select-project]");
+    const archiveButton = event.target.closest("[data-archive-project], [data-unarchive-project]");
+    const deleteButton = event.target.closest("[data-delete-project]");
     try {
-      await api(`/api/projects/${button.dataset.deleteProject}`, { method: "DELETE" });
+      if (selectButton) await api("/api/projects/current", { method: "POST", body: JSON.stringify({ project_id: selectButton.dataset.selectProject }) });
+      else if (archiveButton) { const id = archiveButton.dataset.archiveProject || archiveButton.dataset.unarchiveProject; await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify({ archived: Boolean(archiveButton.dataset.archiveProject) }) }); }
+      else if (deleteButton) { if (!window.confirm("Permanently delete this project and its telemetry?")) return; await api(`/api/projects/${deleteButton.dataset.deleteProject}`, { method: "DELETE" }); }
+      else return;
       await loadProjects();
-    } catch (error) {
-      showMessage("project-message", error.message, "error");
-    }
+    } catch (error) { showMessage("project-message", error.message, "error"); }
   });
 }
 

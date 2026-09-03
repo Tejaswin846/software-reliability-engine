@@ -362,6 +362,68 @@ button:disabled {
   padding: 12px;
 }
 
+.product-page { padding-top: 42px; padding-bottom: 72px; }
+.page-heading, .section-title, .current-project-panel, .project-card header, .project-card footer,
+.project-hero, .device-card, .plan-card header, .usage-row > div:first-child {
+  align-items: center; display: flex; gap: 16px; justify-content: space-between;
+}
+.page-heading h1 { margin-bottom: 8px; }
+.current-project-panel { border-left: 5px solid var(--teal); }
+.project-switcher { min-width: min(360px, 100%); }
+.project-create-grid { align-items: end; display: grid; gap: 14px; grid-template-columns: minmax(240px, 1fr) minmax(180px, .45fr) auto; }
+.project-grid, .plan-grid { display: grid; gap: 16px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.project-card, .plan-card, .metric-card, .device-card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; }
+.project-card.current, .plan-card.selected { border-color: var(--teal); box-shadow: 0 0 0 2px rgba(22,185,164,.12); }
+.project-card.archived { opacity: .72; }
+.project-card h2 { margin: 8px 0; }
+.project-card code { display: block; overflow-wrap: anywhere; }
+.project-card footer { justify-content: flex-start; margin-top: 18px; flex-wrap: wrap; }
+.project-facts { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 20px 0 0; }
+.project-facts div { border-top: 1px solid var(--line); padding-top: 10px; }
+.project-facts dt, .field-label { color: var(--muted); font-size: 11px; font-weight: 950; letter-spacing: .08em; text-transform: uppercase; }
+.project-facts dd { font-weight: 850; margin: 4px 0 0; }
+.status-badge, .current-chip, .count-pill { align-items: center; background: #eef2f7; border-radius: 999px; color: #465264; display: inline-flex; font-size: 11px; font-weight: 950; gap: 7px; letter-spacing: .06em; padding: 6px 10px; text-transform: uppercase; }
+.status-badge i { background: currentColor; border-radius: 50%; height: 7px; width: 7px; }
+.status-active, .status-connected { background: #e2f8f3; color: #087b6c; }
+.status-offline { background: #f1f3f6; color: #596579; }
+.status-disconnected { background: #fff0ea; color: #a7462f; }
+.status-archived { background: #f0eaf7; color: #674b83; }
+.current-chip { background: #fff1c5; color: #8d6312; }
+.empty-state { background: #fff; border: 1px dashed #dbcabd; border-radius: 12px; grid-column: 1 / -1; padding: 34px; text-align: center; }
+.empty-state.compact { background: var(--panel-soft); padding: 18px; }
+.section-tabs { background: #fff; border: 1px solid var(--line); border-radius: 10px; display: flex; gap: 8px; overflow-x: auto; padding: 10px; position: sticky; top: 74px; z-index: 5; }
+.section-tabs a { border-radius: 7px; padding: 9px 12px; white-space: nowrap; }
+.section-tabs a:hover { background: var(--panel-soft); }
+.metric-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.metric-card span { color: var(--muted); display: block; font-size: 13px; font-weight: 800; }
+.metric-card strong { display: block; font-size: 2rem; margin-top: 8px; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; }
+th, td { border-bottom: 1px solid var(--line); padding: 13px 10px; text-align: left; vertical-align: top; }
+th { color: var(--muted); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+td small { color: var(--muted); display: block; margin-top: 4px; }
+.device-card p { margin: 5px 0 0; }
+.usage-grid { display: grid; gap: 12px; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.usage-grid div { background: var(--panel-soft); border-radius: 8px; padding: 14px; }
+.usage-grid span { color: var(--muted); display: block; font-size: 12px; text-transform: capitalize; }
+.usage-grid strong { display: block; font-size: 1.5rem; margin-top: 6px; }
+.billing-overview-grid { display: grid; gap: 16px; grid-template-columns: 1fr 1fr; }
+.plan-price { color: var(--teal); display: block; font-size: 2rem; margin: 10px 0 20px; }
+.plan-card { display: flex; flex-direction: column; }
+.plan-card ul { color: var(--muted); display: grid; gap: 8px; margin: 12px 0 22px; padding-left: 20px; }
+.plan-card > button, .plan-card > a { margin-top: auto; }
+.usage-bars { display: grid; gap: 18px; }
+.usage-row span { color: var(--muted); font-size: 13px; }
+.usage-track { background: #eee7df; border-radius: 999px; height: 9px; margin-top: 8px; overflow: hidden; }
+.usage-track i { background: linear-gradient(90deg, var(--teal), var(--coral)); display: block; height: 100%; }
+
+@media (max-width: 820px) {
+  .project-grid, .plan-grid, .billing-overview-grid, .metric-grid { grid-template-columns: 1fr; }
+  .project-create-grid { grid-template-columns: 1fr; }
+  .page-heading, .current-project-panel, .project-hero { align-items: stretch; flex-direction: column; }
+  .usage-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 .project-field {
   flex: 1;
 }

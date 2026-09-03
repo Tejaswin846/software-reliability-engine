@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#07111f">
-    <title>Reliability Control Center | Nexora</title>
+    <title>Reliability Control Center | Matrixs</title>
     <link rel="stylesheet" href="/dashboard.css">
     <link rel="stylesheet" href="/ui.css?v=20260808">
     <script src="/ui.js?v=20260808" defer></script>
@@ -14,8 +14,8 @@
 
     <div class="app-frame">
       <header class="mobile-header" aria-label="Mobile navigation">
-        <a class="mobile-brand" href="#overview" aria-label="Nexora reliability home">
-          <span class="brand-mark" aria-hidden="true">N</span>
+        <a class="mobile-brand" href="#overview" aria-label="Matrixs reliability home">
+          <span class="brand-mark" aria-hidden="true">M</span>
           <span>Reliability</span>
         </a>
         <button
@@ -39,10 +39,10 @@
         data-hs-overlay-options='{"backdropClasses":"hs-overlay-backdrop"}'
       >
         <div class="sidebar-head">
-          <a class="brand" href="#overview" aria-label="Nexora reliability home">
-            <span class="brand-mark" aria-hidden="true">N</span>
+          <a class="brand" href="#overview" aria-label="Matrixs reliability home">
+            <span class="brand-mark" aria-hidden="true">M</span>
             <span class="brand-copy">
-              <strong>Nexora</strong>
+              <strong>Matrixs</strong>
               <small>Reliability cloud</small>
             </span>
           </a>
@@ -107,7 +107,7 @@
               <small>Live benchmark telemetry</small>
             </span>
           </div>
-          <p>Software Reliability Engine v0.2</p>
+          <p>Matrixs Reliability Engine v0.7</p>
         </div>
       </aside>
 
@@ -119,11 +119,16 @@
               <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg>
               <span>Control center</span>
             </div>
-            <h1>Software reliability</h1>
+            <h1>Matrixs reliability</h1>
             <p>See where agents succeed, where workflows break, and which guardrails are protecting production.</p>
           </div>
 
           <div class="header-actions">
+            <label class="dashboard-project-switcher">
+              <span>Current project</span>
+              <select id="dashboard-project-select" aria-label="Current project"><option value="">Loading projects…</option></select>
+              <small id="dashboard-project-context">Project-scoped telemetry</small>
+            </label>
             <div class="update-copy">
               <span>Last synchronized</span>
               <strong id="last-updated">Waiting for telemetry</strong>
@@ -145,7 +150,7 @@
               <p class="section-kicker">System pulse</p>
               <h2 id="overview-title">Reliability at a glance</h2>
             </div>
-            <p>Weighted across all benchmarked models and production workflows.</p>
+            <p>Calculated only from the current project's persisted workflows.</p>
           </div>
 
           <div class="overview-grid">
@@ -634,7 +639,7 @@
         </section>
 
         <footer class="page-footer">
-          <span>Nexora Software Reliability Engine</span>
+          <span>Matrixs Reliability Engine</span>
           <span>Operational telemetry for safer AI systems</span>
         </footer>
       </main>

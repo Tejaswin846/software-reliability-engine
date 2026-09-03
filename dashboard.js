@@ -634,9 +634,11 @@ async function loadDashboard() {
   }
   try {
     let payload;
+    const projectSelect = byId("dashboard-project-select");
+    const selectedProjectId = projectSelect?.value || "";
     if (window.SoftwareAuth?.request) {
       try {
-        payload = await window.SoftwareAuth.request("/api/me/dashboard");
+        payload = await window.SoftwareAuth.request(`/api/me/dashboard${selectedProjectId ? `?project_id=${encodeURIComponent(selectedProjectId)}` : ""}`);
       } catch (error) {
         if (![401, 403, 404].includes(Number(error.status))) {
           throw error;
@@ -654,11 +656,12 @@ async function loadDashboard() {
       }
     }
     if (!payload) {
-      const response = await fetch("/api/dashboard", { headers: { Accept: "application/json" } });
-      if (!response.ok) {
-        throw new Error(`Dashboard API returned ${response.status}`);
-      }
-      payload = await response.json();
+      throw new Error("Sign in to view project-scoped reliability data.");
+    }
+    if (payload.current_project) {
+      setText("dashboard-project-context", `${String(payload.current_project.status).toUpperCase()} · ${payload.current_project.device_label || "No installation"} · ${payload.current_project.environment || "Development"}`);
+    } else {
+      setText("dashboard-project-context", "No project selected");
     }
     renderOverview(payload.overview || {});
     renderRedis(payload.redis || {});
@@ -685,6 +688,21 @@ async function loadDashboard() {
     }
   }
 }
+
+async function loadDashboardProjects() {
+  const select = byId("dashboard-project-select");
+  if (!select || !window.SoftwareAuth?.request) return;
+  const data = await window.SoftwareAuth.request("/api/projects");
+  const projects = (data.projects || []).filter((project) => project.status !== "archived");
+  select.innerHTML = projects.length ? projects.map((project) => `<option value="${escapeHtml(project.id)}" ${project.is_current ? "selected" : ""}>${escapeHtml(project.name)}</option>`).join("") : '<option value="">No projects connected</option>';
+  select.disabled = projects.length === 0;
+}
+
+byId("dashboard-project-select")?.addEventListener("change", async (event) => {
+  if (!event.target.value) return;
+  await window.SoftwareAuth.request("/api/projects/current", { method: "POST", body: JSON.stringify({ project_id: event.target.value }) });
+  await loadDashboard();
+});
 
 refreshButton?.addEventListener("click", loadDashboard);
 
@@ -735,4 +753,4 @@ function initializePrelineFallbacks() {
 
 initializePrelineFallbacks();
 wireBillingActions();
-loadDashboard();
+loadDashboardProjects().then(loadDashboard).catch((error) => setDashboardStatus(`Dashboard error: ${error.message}`, "error"));

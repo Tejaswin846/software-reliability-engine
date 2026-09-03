@@ -3,34 +3,36 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Projects | Matrixs Reliability</title>
-    <link rel="stylesheet" href="/saas.css?v=20260901a">
-    <link rel="stylesheet" href="/ui.css?v=20260808c">
-    <script src="/ui.js?v=20260808c" defer></script>
+    <title>Projects | Matrixs</title>
+    <link rel="stylesheet" href="/saas.css?v=20260903a">
+    <link rel="stylesheet" href="/ui.css?v=20260903a">
+    <script src="/ui.js?v=20260903a" defer></script>
   </head>
   <body data-requires-auth="true" data-matrixs-page="reliability">
-    <header class="topbar">
-      <p class="brand"><span>Matrixs</span><strong>Projects</strong></p>
-      <nav class="nav">
-        <span id="user-label" class="muted">--</span>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/api-keys">API Keys</a>
-        <button id="logout-button" class="secondary">Logout</button>
-      </nav>
-    </header>
-    <main class="shell stack">
-      <section class="panel stack">
-        <h1>Projects</h1>
-        <p class="muted">Create one project for each agent app, team, or customer environment.</p>
-        <form id="project-form" class="row">
-          <label style="flex: 1">Project Name <input name="name" required placeholder="my-agent-prod"></label>
-          <button type="submit">Create Project</button>
-        </form>
-        <div id="project-message" class="message"></div>
+    <main class="shell stack product-page">
+      <section class="page-heading">
+        <div><p class="eyebrow">Persistent project registry</p><h1>Projects</h1><p class="muted">Every connected project remains here, even when it is offline.</p></div>
+        <span id="user-label" class="muted">Signed in</span>
       </section>
-      <section id="project-list" class="card-list"></section>
+      <section id="current-project-panel" class="panel current-project-panel" aria-live="polite">
+        <div><span class="field-label">Current project</span><h2 id="current-project-name">No project selected</h2><p id="current-project-meta" class="muted">Create or connect a project to begin.</p></div>
+        <label class="project-switcher">Switch project<select id="current-project-select"><option value="">No projects</option></select></label>
+      </section>
+      <section class="panel stack">
+        <div class="row"><div><h2>Add a project</h2><p class="muted">Create a durable project record before connecting Matrixs.</p></div><a class="button secondary" href="/onboarding">Connect an existing app</a></div>
+        <form id="project-form" class="project-create-grid">
+          <label>Project name<input name="name" required placeholder="Nexora production"></label>
+          <label>Environment<select name="environment"><option value="development">Development</option><option value="staging">Staging</option><option value="production">Production</option></select></label>
+          <button type="submit">Create project</button>
+        </form>
+        <div id="project-message" class="message" role="status"></div>
+      </section>
+      <section>
+        <div class="section-title"><div><h2>All projects</h2><p class="muted">Archived projects stay visible until explicitly deleted.</p></div><span id="project-count" class="count-pill">0 projects</span></div>
+        <div id="project-list" class="project-grid"><div class="card muted">Loading projects…</div></div>
+      </section>
     </main>
     <script src="/auth.js"></script>
-  <script src="/saas.js?v=20260902b"></script>
+    <script src="/saas.js?v=20260903a"></script>
   </body>
 </html>

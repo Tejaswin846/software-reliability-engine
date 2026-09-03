@@ -20,6 +20,8 @@
   function currentRoute(pathname) {
     if (pathname === "/" || pathname === "/app" || pathname === "/nexora") return "/";
     if (pathname.startsWith("/dashboard")) return "/dashboard";
+    if (pathname.startsWith("/projects")) return "/projects";
+    if (pathname.startsWith("/billing")) return "/billing";
     if (pathname.startsWith("/onboarding")) return "/onboarding";
     if (pathname.startsWith("/observability")) return "/observability";
     if (pathname.startsWith("/guide") || pathname.startsWith("/code") || pathname.startsWith("/mcp")) return "/guide";
@@ -35,8 +37,10 @@
     var links = reliabilityApp ? [
       ["/", "Home"],
       ["/dashboard", "Reliability"],
-      ["/onboarding", "Setup"],
+      ["/projects", "Projects"],
       ["/failure-analysis", "Failures"],
+      ["/onboarding", "Setup"],
+      ["/billing", "Billing"],
       ["/developer-docs", "Docs"]
     ] : [
       ["/", "Workbench"],

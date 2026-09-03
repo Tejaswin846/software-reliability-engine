@@ -30,6 +30,11 @@ from pydantic import BaseModel, Field
 import sentry_sdk
 
 try:
+    from .billing_service import build_plan_definitions, limit_message, remaining
+except ImportError:
+    from billing_service import build_plan_definitions, limit_message, remaining
+
+try:
     from .reliability_scoring import build_metrics_from_summary
 except ImportError:
     from reliability_scoring import build_metrics_from_summary
@@ -195,7 +200,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.6.3")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.7.0")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -260,6 +265,8 @@ _INITIALIZED_DATABASES: set[str] = set()
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
 STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "")
 STRIPE_PRO_PRICE_ID = os.getenv("STRIPE_PRO_PRICE_ID", "")
+STRIPE_DEVELOPER_PRICE_ID = os.getenv("STRIPE_DEVELOPER_PRICE_ID", "")
+STRIPE_BUSINESS_PRICE_ID = os.getenv("STRIPE_BUSINESS_PRICE_ID", "")
 STRIPE_ENTERPRISE_PRICE_ID = os.getenv("STRIPE_ENTERPRISE_PRICE_ID", "")
 STRIPE_SUCCESS_URL = os.getenv("STRIPE_SUCCESS_URL", "")
 STRIPE_CANCEL_URL = os.getenv("STRIPE_CANCEL_URL", "")
@@ -276,32 +283,12 @@ ORG_ROLE_RANK = {
     "admin": 3,
     "owner": 4,
 }
-PLAN_DEFINITIONS = [
-    {
-        "id": "free",
-        "name": "Free",
-        "max_projects": 1,
-        "max_api_keys": 1,
-        "monthly_workflow_limit": 1000,
-        "metadata": {"price": "$0", "audience": "Individual developers", "stripe_price_id": None},
-    },
-    {
-        "id": "pro",
-        "name": "Pro",
-        "max_projects": 20,
-        "max_api_keys": 50,
-        "monthly_workflow_limit": 100000,
-        "metadata": {"price": "Stripe", "audience": "Teams", "stripe_price_id": STRIPE_PRO_PRICE_ID or None},
-    },
-    {
-        "id": "enterprise",
-        "name": "Enterprise",
-        "max_projects": None,
-        "max_api_keys": None,
-        "monthly_workflow_limit": None,
-        "metadata": {"price": "Custom", "audience": "Large organizations", "stripe_price_id": STRIPE_ENTERPRISE_PRICE_ID or None},
-    },
-]
+PLAN_DEFINITIONS = build_plan_definitions(
+    stripe_developer_price_id=STRIPE_DEVELOPER_PRICE_ID,
+    stripe_pro_price_id=STRIPE_PRO_PRICE_ID,
+    stripe_business_price_id=STRIPE_BUSINESS_PRICE_ID,
+    stripe_enterprise_price_id=STRIPE_ENTERPRISE_PRICE_ID,
+)
 
 
 def now_iso() -> str:
@@ -464,7 +451,20 @@ def seed_plans(db: sqlite3.Connection) -> None:
                 plan["max_api_keys"],
                 plan["monthly_workflow_limit"],
                 created_at,
-                json.dumps(plan["metadata"], sort_keys=True),
+                json.dumps(
+                    {
+                        "price": plan["price"],
+                        "monthly_price": plan["monthly_price"],
+                        "audience": plan["audience"],
+                        "stripe_price_id": plan["stripe_price_id"],
+                        "monthly_telemetry_limit": plan["monthly_telemetry_limit"],
+                        "max_team_members": plan["max_team_members"],
+                        "retention_days": plan["retention_days"],
+                        "max_installations": plan["max_installations"],
+                        "features": plan["features"],
+                    },
+                    sort_keys=True,
+                ),
             ),
         )
 
@@ -484,11 +484,12 @@ def ensure_default_subscriptions(db: sqlite3.Connection) -> None:
             """
             INSERT INTO subscriptions (
                 id, user_id, plan_id, status, current_period_start,
-                current_period_end, created_at, updated_at, metadata_json
+                current_period_end, created_at, updated_at, metadata_json,
+                billing_period, started_at, cancel_at_period_end, payment_status
             )
-            VALUES (?, ?, 'free', 'active', ?, ?, ?, ?, '{}')
+            VALUES (?, ?, 'free', 'active', ?, ?, ?, ?, '{}', 'monthly', ?, 0, 'not_required')
             """,
-            (f"sub_{uuid.uuid4().hex}", row["id"], period_start, period_end, created_at, created_at),
+            (f"sub_{uuid.uuid4().hex}", row["id"], period_start, period_end, created_at, created_at, created_at),
         )
 
 
@@ -686,21 +687,34 @@ def billing_summary(db: sqlite3.Connection, user_id: str) -> Dict[str, Any]:
     period_start = subscription["current_period_start"]
     period_end = subscription["current_period_end"]
     totals = usage_totals(db, user_id, period_start, period_end)
-    project_count = int(db.execute("SELECT COUNT(*) FROM projects WHERE user_id = ?", (user_id,)).fetchone()[0])
+    project_count = int(db.execute("SELECT COUNT(*) FROM projects WHERE user_id = ? AND archived_at IS NULL", (user_id,)).fetchone()[0])
     active_api_key_count = int(
         db.execute(
             "SELECT COUNT(*) FROM api_keys WHERE user_id = ? AND is_active = 1",
             (user_id,),
         ).fetchone()[0]
     )
+    plan_metadata = json.loads(subscription["plan_metadata_json"] or "{}")
     workflow_limit = subscription["monthly_workflow_limit"]
     max_projects = subscription["max_projects"]
     max_api_keys = subscription["max_api_keys"]
-
-    def remaining(limit: Optional[int], used: int) -> Optional[int]:
-        if limit is None:
-            return None
-        return max(0, int(limit) - used)
+    telemetry_events = int(db.execute(
+        """SELECT COUNT(*) FROM sdk_events WHERE workflow_id IN (
+               SELECT workflow_id FROM sdk_workflows
+               WHERE user_id = ? AND started_at >= ? AND started_at < ?
+           )""",
+        (user_id, period_start, period_end),
+    ).fetchone()[0])
+    active_installations = int(db.execute(
+        "SELECT COUNT(*) FROM installations WHERE user_id = ? AND status IN ('active', 'connected')",
+        (user_id,),
+    ).fetchone()[0])
+    team_members = int(db.execute(
+        """SELECT COUNT(DISTINCT organization_members.user_id)
+           FROM organization_members JOIN organizations ON organizations.id = organization_members.organization_id
+           WHERE organizations.owner_user_id = ?""",
+        (user_id,),
+    ).fetchone()[0]) or 1
 
     return {
         "plan": {
@@ -709,7 +723,13 @@ def billing_summary(db: sqlite3.Connection, user_id: str) -> Dict[str, Any]:
             "max_projects": max_projects,
             "max_api_keys": max_api_keys,
             "monthly_workflow_limit": workflow_limit,
-            "metadata": json.loads(subscription["plan_metadata_json"] or "{}"),
+            "monthly_telemetry_limit": plan_metadata.get("monthly_telemetry_limit"),
+            "max_team_members": plan_metadata.get("max_team_members"),
+            "retention_days": plan_metadata.get("retention_days"),
+            "max_installations": plan_metadata.get("max_installations"),
+            "features": plan_metadata.get("features", {}),
+            "price": plan_metadata.get("price", "Configurable"),
+            "metadata": plan_metadata,
         },
         "subscription": {
             "id": subscription["id"],
@@ -719,6 +739,10 @@ def billing_summary(db: sqlite3.Connection, user_id: str) -> Dict[str, Any]:
             "stripe_status": subscription["stripe_status"],
             "current_period_start": period_start,
             "current_period_end": period_end,
+            "billing_period": subscription["billing_period"],
+            "started_at": subscription["started_at"],
+            "cancel_at_period_end": bool(subscription["cancel_at_period_end"]),
+            "payment_status": subscription["payment_status"],
         },
         "stripe": {
             "configured": bool(STRIPE_SECRET_KEY),
@@ -732,11 +756,18 @@ def billing_summary(db: sqlite3.Connection, user_id: str) -> Dict[str, Any]:
             **totals,
             "projects": project_count,
             "api_keys": active_api_key_count,
+            "telemetry_events": telemetry_events,
+            "installations": active_installations,
+            "team_members": team_members,
+            "retention_days": plan_metadata.get("retention_days"),
         },
         "remaining": {
             "projects": remaining(max_projects, project_count),
             "api_keys": remaining(max_api_keys, active_api_key_count),
             "workflows": remaining(workflow_limit, totals["workflows"]),
+            "telemetry_events": remaining(plan_metadata.get("monthly_telemetry_limit"), telemetry_events),
+            "installations": remaining(plan_metadata.get("max_installations"), active_installations),
+            "team_members": remaining(plan_metadata.get("max_team_members"), team_members),
         },
     }
 
@@ -750,24 +781,19 @@ def enforce_limit(
     summary = billing_summary(db, user_id)
     plan = summary["plan"]
     usage = summary["usage"]
-    if resource == "projects":
-        limit = plan["max_projects"]
-        used = usage["projects"]
-    elif resource == "api_keys":
-        limit = plan["max_api_keys"]
-        used = usage["api_keys"]
-    elif resource == "workflows":
-        limit = plan["monthly_workflow_limit"]
-        used = usage["workflows"]
-    else:
+    limit_keys = {
+        "projects": "max_projects", "api_keys": "max_api_keys",
+        "workflows": "monthly_workflow_limit", "telemetry_events": "monthly_telemetry_limit",
+        "installations": "max_installations", "team_members": "max_team_members",
+    }
+    if resource not in limit_keys:
         raise ValueError(f"Unknown limited resource: {resource}")
+    limit = plan[limit_keys[resource]]
+    used = usage[resource]
     if limit is not None and used + requested_increment > int(limit):
         raise HTTPException(
             status_code=402,
-            detail=(
-                f"{plan['name']} plan limit exceeded for {resource}. "
-                "Upgrade your plan or wait for the next billing period."
-            ),
+            detail=limit_message(plan, resource),
         )
 
 
@@ -784,16 +810,24 @@ def stripe_module():
 
 def stripe_price_id_for_plan(plan_id: str) -> Optional[str]:
     normalized = plan_id.strip().lower()
+    if normalized == "developer":
+        return STRIPE_DEVELOPER_PRICE_ID or None
     if normalized == "pro":
         return STRIPE_PRO_PRICE_ID or None
+    if normalized == "business":
+        return STRIPE_BUSINESS_PRICE_ID or None
     if normalized == "enterprise":
         return STRIPE_ENTERPRISE_PRICE_ID or None
     return None
 
 
 def plan_id_from_stripe_price(price_id: Optional[str]) -> str:
+    if price_id and STRIPE_DEVELOPER_PRICE_ID and price_id == STRIPE_DEVELOPER_PRICE_ID:
+        return "developer"
     if price_id and STRIPE_PRO_PRICE_ID and price_id == STRIPE_PRO_PRICE_ID:
         return "pro"
+    if price_id and STRIPE_BUSINESS_PRICE_ID and price_id == STRIPE_BUSINESS_PRICE_ID:
+        return "business"
     if price_id and STRIPE_ENTERPRISE_PRICE_ID and price_id == STRIPE_ENTERPRISE_PRICE_ID:
         return "enterprise"
     return "free"
@@ -934,9 +968,11 @@ def create_local_subscription(
         INSERT INTO subscriptions (
             id, user_id, plan_id, status, stripe_subscription_id,
             stripe_price_id, stripe_status, current_period_start,
-            current_period_end, created_at, updated_at, metadata_json
+            current_period_end, created_at, updated_at, metadata_json,
+            billing_period, started_at, cancel_at_period_end, payment_status,
+            provider_customer_id, provider_subscription_id
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'monthly', ?, 0, ?, ?, ?)
         """,
         (
             subscription_id,
@@ -951,6 +987,10 @@ def create_local_subscription(
             now,
             now,
             json.dumps(metadata or {}, sort_keys=True),
+            now,
+            "paid" if stripe_subscription_id else "not_required",
+            None,
+            stripe_subscription_id,
         ),
     )
     return subscription_id
@@ -1134,7 +1174,34 @@ def _initialize_database() -> None:
                 user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
                 organization_id TEXT REFERENCES organizations(id) ON DELETE SET NULL,
                 name TEXT NOT NULL,
-                created_at TEXT NOT NULL
+                status TEXT NOT NULL DEFAULT 'offline',
+                environment TEXT NOT NULL DEFAULT 'development',
+                created_at TEXT NOT NULL,
+                updated_at TEXT,
+                last_seen_at TEXT,
+                archived_at TEXT,
+                metadata_json TEXT NOT NULL DEFAULT '{}'
+            );
+
+            CREATE TABLE IF NOT EXISTS user_preferences (
+                user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                current_project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS installations (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+                user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+                api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL,
+                device_label TEXT NOT NULL,
+                operating_system TEXT,
+                runtime TEXT,
+                environment TEXT NOT NULL DEFAULT 'development',
+                first_seen_at TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'connected',
+                metadata_json TEXT NOT NULL DEFAULT '{}'
             );
 
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -1561,6 +1628,9 @@ def _initialize_database() -> None:
                 user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
                 project_id TEXT REFERENCES projects(id) ON DELETE SET NULL,
                 api_key_id TEXT REFERENCES api_keys(id) ON DELETE SET NULL,
+                installation_id TEXT REFERENCES installations(id) ON DELETE SET NULL,
+                session_id TEXT,
+                app_user_id TEXT,
                 project_name TEXT NOT NULL,
                 workflow_name TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'running',
@@ -1569,6 +1639,12 @@ def _initialize_database() -> None:
                 predicted_failure_probability REAL,
                 guardrail_action TEXT,
                 total_latency_ms INTEGER NOT NULL DEFAULT 0,
+                reliability_score REAL,
+                model_calls INTEGER NOT NULL DEFAULT 0,
+                tool_calls INTEGER NOT NULL DEFAULT 0,
+                retries INTEGER NOT NULL DEFAULT 0,
+                errors INTEGER NOT NULL DEFAULT 0,
+                guardrail_actions INTEGER NOT NULL DEFAULT 0,
                 started_at TEXT NOT NULL,
                 completed_at TEXT,
                 metadata_json TEXT NOT NULL DEFAULT '{}'
@@ -1620,6 +1696,28 @@ def _initialize_database() -> None:
             """
         )
         ensure_column(db, "projects", "organization_id", "TEXT REFERENCES organizations(id) ON DELETE SET NULL")
+        ensure_column(db, "projects", "status", "TEXT NOT NULL DEFAULT 'offline'")
+        ensure_column(db, "projects", "environment", "TEXT NOT NULL DEFAULT 'development'")
+        ensure_column(db, "projects", "updated_at", "TEXT")
+        ensure_column(db, "projects", "last_seen_at", "TEXT")
+        ensure_column(db, "projects", "archived_at", "TEXT")
+        ensure_column(db, "projects", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(db, "sdk_workflows", "installation_id", "TEXT REFERENCES installations(id) ON DELETE SET NULL")
+        ensure_column(db, "sdk_workflows", "session_id", "TEXT")
+        ensure_column(db, "sdk_workflows", "app_user_id", "TEXT")
+        ensure_column(db, "sdk_workflows", "reliability_score", "REAL")
+        ensure_column(db, "sdk_workflows", "model_calls", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "sdk_workflows", "tool_calls", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "sdk_workflows", "retries", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "sdk_workflows", "errors", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "sdk_workflows", "guardrail_actions", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "subscriptions", "workspace_id", "TEXT")
+        ensure_column(db, "subscriptions", "billing_period", "TEXT NOT NULL DEFAULT 'monthly'")
+        ensure_column(db, "subscriptions", "started_at", "TEXT")
+        ensure_column(db, "subscriptions", "cancel_at_period_end", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(db, "subscriptions", "payment_status", "TEXT NOT NULL DEFAULT 'not_required'")
+        ensure_column(db, "subscriptions", "provider_customer_id", "TEXT")
+        ensure_column(db, "subscriptions", "provider_subscription_id", "TEXT")
         ensure_column(db, "users", "stripe_customer_id", "TEXT")
         ensure_column(db, "subscriptions", "stripe_subscription_id", "TEXT")
         ensure_column(db, "subscriptions", "stripe_price_id", "TEXT")
@@ -1648,6 +1746,10 @@ def _initialize_database() -> None:
                 ON sdk_workflows(user_id, project_id, started_at)
             """
         )
+        db.execute("CREATE INDEX IF NOT EXISTS idx_installations_project_seen ON installations(project_id, last_seen_at DESC)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_sdk_workflows_installation ON sdk_workflows(installation_id, started_at DESC)")
+        db.execute("UPDATE projects SET updated_at = COALESCE(updated_at, created_at)")
+        db.execute("UPDATE subscriptions SET started_at = COALESCE(started_at, created_at)")
         seed_plans(db)
         bootstrap_dev_identity(db)
         ensure_default_subscriptions(db)
@@ -1719,6 +1821,9 @@ class SDKWorkflowStart(BaseModel):
     project_name: str = Field(..., min_length=1, max_length=160)
     workflow_name: str = Field(..., min_length=1, max_length=220)
     workflow_id: Optional[str] = Field(None, max_length=180)
+    installation_id: Optional[str] = Field(None, max_length=180)
+    session_id: Optional[str] = Field(None, max_length=180)
+    app_user_id: Optional[str] = Field(None, max_length=180)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 
@@ -1859,6 +1964,18 @@ class ChatMessageCreate(BaseModel):
 class ProjectCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=160)
     organization_id: Optional[str] = Field(None, max_length=180)
+    environment: str = Field("development", max_length=80)
+
+
+class ProjectUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=160)
+    environment: Optional[str] = Field(None, min_length=1, max_length=80)
+    archived: Optional[bool] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+class CurrentProjectUpdate(BaseModel):
+    project_id: str = Field(..., min_length=1, max_length=180)
 
 
 class InstallApiKeyCreate(BaseModel):
@@ -2744,6 +2861,10 @@ def require_sdk_api_key(
             raise HTTPException(status_code=403, detail="Invalid SDK API key.")
         used_at = now_iso()
         db.execute("UPDATE api_keys SET last_used_at = ? WHERE id = ?", (used_at, row["api_key_id"]))
+        db.execute(
+            "UPDATE projects SET status = 'active', last_seen_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL",
+            (used_at, used_at, row["project_id"]),
+        )
         record_usage(
             db,
             row["user_id"],
@@ -2787,6 +2908,12 @@ def sdk_insert_event(
     error_message: Optional[str] = None,
     payload: Optional[Dict[str, Any]] = None,
 ) -> str:
+    workflow_owner = db.execute(
+        "SELECT user_id, project_id, api_key_id, installation_id FROM sdk_workflows WHERE workflow_id = ?",
+        (workflow_id,),
+    ).fetchone()
+    if workflow_owner and workflow_owner["user_id"]:
+        enforce_limit(db, workflow_owner["user_id"], "telemetry_events")
     event_id = f"evt_{uuid.uuid4().hex}"
     db.execute(
         """
@@ -2813,6 +2940,22 @@ def sdk_insert_event(
             now_iso(),
         ),
     )
+    if workflow_owner and workflow_owner["user_id"]:
+        record_usage(
+            db, workflow_owner["user_id"], "telemetry_event",
+            project_id=workflow_owner["project_id"], api_key_id=workflow_owner["api_key_id"],
+            metadata={"workflow_id": workflow_id, "event_type": event_type},
+        )
+        timestamp = now_iso()
+        db.execute(
+            "UPDATE projects SET last_seen_at = ?, updated_at = ?, status = CASE WHEN archived_at IS NULL THEN 'active' ELSE status END WHERE id = ?",
+            (timestamp, timestamp, workflow_owner["project_id"]),
+        )
+        if workflow_owner["installation_id"]:
+            db.execute(
+                "UPDATE installations SET last_seen_at = ?, status = 'active' WHERE id = ?",
+                (timestamp, workflow_owner["installation_id"]),
+            )
     return event_id
 
 
@@ -5278,6 +5421,84 @@ def dashboard_payload() -> Dict[str, Any]:
     }
 
 
+def project_runtime_status(project: Dict[str, Any]) -> str:
+    if project.get("archived_at"):
+        return "archived"
+    installation_status = str(project.get("installation_status") or "").lower()
+    last_seen = project.get("last_activity_at") or project.get("last_seen_at")
+    if last_seen:
+        try:
+            seen = datetime.fromisoformat(str(last_seen).replace("Z", "+00:00"))
+            if seen.tzinfo is None:
+                seen = seen.replace(tzinfo=timezone.utc)
+            if datetime.now(timezone.utc) - seen <= timedelta(minutes=5):
+                return "active"
+        except (TypeError, ValueError):
+            pass
+    if int(project.get("connected_installation_count") or 0) > 0 or installation_status in {"active", "connected"}:
+        return "connected"
+    if installation_status == "disconnected":
+        return "disconnected"
+    return "offline"
+
+
+def project_summary_rows(db: sqlite3.Connection, user_id: str, *, include_archived: bool = True) -> List[Dict[str, Any]]:
+    rows = db.execute(
+        """SELECT projects.*,
+                  organizations.name AS organization_name,
+                  organization_members.role AS organization_role,
+                  COUNT(DISTINCT sdk_workflows.workflow_id) AS workflow_count,
+                  COUNT(DISTINCT CASE WHEN installations.status IN ('active', 'connected') THEN installations.id END) AS connected_installation_count,
+                  COUNT(DISTINCT installations.id) AS installation_count,
+                  AVG(CASE WHEN sdk_workflows.reliability_score IS NOT NULL THEN sdk_workflows.reliability_score
+                           WHEN sdk_workflows.success = 1 THEN 100.0
+                           WHEN sdk_workflows.success = 0 THEN 0.0 END) AS reliability_score,
+                  MAX(COALESCE(sdk_workflows.completed_at, sdk_workflows.started_at, installations.last_seen_at, projects.last_seen_at)) AS last_activity_at,
+                  (SELECT device_label FROM installations i WHERE i.project_id = projects.id ORDER BY i.last_seen_at DESC LIMIT 1) AS device_label,
+                  (SELECT status FROM installations i WHERE i.project_id = projects.id ORDER BY i.last_seen_at DESC LIMIT 1) AS installation_status,
+                  (SELECT operating_system FROM installations i WHERE i.project_id = projects.id ORDER BY i.last_seen_at DESC LIMIT 1) AS operating_system,
+                  (SELECT runtime FROM installations i WHERE i.project_id = projects.id ORDER BY i.last_seen_at DESC LIMIT 1) AS runtime
+           FROM projects
+           LEFT JOIN organizations ON organizations.id = projects.organization_id
+           LEFT JOIN organization_members ON organization_members.organization_id = projects.organization_id
+                                            AND organization_members.user_id = ?
+           LEFT JOIN sdk_workflows ON sdk_workflows.project_id = projects.id
+           LEFT JOIN installations ON installations.project_id = projects.id
+           WHERE (projects.user_id = ? OR organization_members.user_id = ?)
+             AND (? = 1 OR projects.archived_at IS NULL)
+           GROUP BY projects.id
+           ORDER BY projects.archived_at IS NOT NULL, COALESCE(last_activity_at, projects.created_at) DESC""",
+        (user_id, user_id, user_id, 1 if include_archived else 0),
+    ).fetchall()
+    projects = []
+    for row in rows:
+        project = row_to_dict(row)
+        project["status"] = project_runtime_status(project)
+        project["reliability_score"] = round(float(project.get("reliability_score") or 0.0), 2)
+        project["metadata"] = parse_json_object(project.pop("metadata_json", "{}"))
+        projects.append(project)
+    return projects
+
+
+def current_project_for_user(db: sqlite3.Connection, user_id: str) -> Optional[Dict[str, Any]]:
+    projects = project_summary_rows(db, user_id, include_archived=False)
+    if not projects:
+        return None
+    preference = db.execute(
+        "SELECT current_project_id FROM user_preferences WHERE user_id = ?",
+        (user_id,),
+    ).fetchone()
+    preferred_id = preference["current_project_id"] if preference else None
+    selected = next((project for project in projects if project["id"] == preferred_id), projects[0])
+    if preferred_id != selected["id"]:
+        db.execute(
+            """INSERT INTO user_preferences (user_id, current_project_id, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET current_project_id = excluded.current_project_id, updated_at = excluded.updated_at""",
+            (user_id, selected["id"], now_iso()),
+        )
+    return selected
+
+
 def user_project_ids(user_id: str) -> List[str]:
     init_db()
     with connect() as db:
@@ -5288,51 +5509,121 @@ def user_project_ids(user_id: str) -> List[str]:
     return [row["id"] for row in rows]
 
 
-def user_dashboard_payload(user: Dict[str, Any]) -> Dict[str, Any]:
-    project_ids = user_project_ids(user["id"])
+def user_dashboard_payload(user: Dict[str, Any], project_id: Optional[str] = None) -> Dict[str, Any]:
+    init_db()
+    with connect() as db:
+        if project_id:
+            user_project_or_404(db, user["id"], project_id)
+            selected_project = next(
+                (item for item in project_summary_rows(db, user["id"], include_archived=False) if item["id"] == project_id),
+                None,
+            )
+            if selected_project is None:
+                raise HTTPException(status_code=404, detail="Project not found.")
+        else:
+            selected_project = current_project_for_user(db, user["id"])
+    project_ids = [selected_project["id"]] if selected_project else []
     sdk = dashboard_sdk_payload(project_ids)
-    benchmark = user_benchmark_overview(user["id"])
-    benchmark_total = int(benchmark["total_workflows"])
     sdk_total = int(sdk["total_workflows"])
-    combined_total = benchmark_total + sdk_total
-    combined_successful = int(benchmark["successful_workflows"]) + int(sdk["successful_workflows"])
-    combined_failed = int(benchmark["failed_workflows"]) + int(sdk["failed_workflows"])
-    weighted_reliability = (
-        float(benchmark["reliability_score"]) * benchmark_total
-        + max(0.0, 100.0 - float(sdk["failure_rate"])) * sdk_total
-    )
+    combined_successful = int(sdk["successful_workflows"])
+    combined_failed = int(sdk["failed_workflows"])
     with connect() as db:
         billing = billing_summary(db, user["id"])
         recovery = recovery_summary(project_ids)
+        period_start = billing["subscription"]["current_period_start"]
+        period_end = billing["subscription"]["current_period_end"]
+        project_usage_rows = db.execute(
+            """SELECT metric_type, COALESCE(SUM(quantity), 0) AS total FROM usage_records
+               WHERE user_id = ? AND project_id = ? AND created_at >= ? AND created_at < ?
+               GROUP BY metric_type""",
+            (user["id"], selected_project["id"] if selected_project else "", period_start, period_end),
+        ).fetchall()
+        project_usage = {row["metric_type"]: int(row["total"] or 0) for row in project_usage_rows}
     copilot = copilot_dashboard_payload(project_ids, user["id"])
-    optimizer = optimizer_dashboard_payload()
-    meta_reliability = meta_reliability_dashboard_payload()
     team_workspaces = team_workspaces_payload(user["id"])
     return {
         "user": user,
         "projects": project_ids,
+        "current_project": selected_project,
+        "project_usage": {
+            "workflows": project_usage.get("workflow", 0),
+            "model_calls": project_usage.get("model_call", 0),
+            "tool_calls": project_usage.get("tool_call", 0),
+            "telemetry_events": project_usage.get("telemetry_event", 0),
+        },
         "billing": billing,
         "recovery_analytics": recovery,
         "copilot": copilot,
-        "optimizer": optimizer,
-        "meta_reliability": meta_reliability,
+        "optimizer": {"history": [], "autonomous_actions": 0, "estimated_success_improvement": 0, "rollbacks": 0, "dry_runs": 0, "applied_actions": 0, "average_confidence": 0},
+        "meta_reliability": {"recent_decisions": [], "rejected_actions": [], "total_decisions": 0, "pending_human": 0, "rejected_unsafe": 0, "approved": 0, "high_risk": 0},
         "redis": redis_health_check(),
         "team_workspaces": team_workspaces,
         "sdk_workflows": sdk,
-        "model_leaderboard": user_benchmark_leaderboard(user["id"]),
-        "historical_trends": user_benchmark_trends(user["id"]),
+        "model_leaderboard": [],
+        "historical_trends": [],
         "overview": {
-            "total_benchmark_runs": benchmark["total_benchmark_runs"],
-            "total_workflows": combined_total,
+            "total_benchmark_runs": 0,
+            "total_workflows": sdk_total,
             "successful_workflows": combined_successful,
             "failed_workflows": combined_failed,
-            "success_rate": round(combined_successful / combined_total * 100.0, 2) if combined_total else 0.0,
-            "failure_rate": round(combined_failed / combined_total * 100.0, 2) if combined_total else 0.0,
-            "reliability_score": round(weighted_reliability / combined_total, 2) if combined_total else 0.0,
+            "success_rate": sdk["success_rate"],
+            "failure_rate": sdk["failure_rate"],
+            "reliability_score": round(100.0 - float(sdk["failure_rate"]), 2) if sdk_total else 0.0,
             "average_latency_ms": sdk["average_latency_ms"],
             "average_confidence": sdk["average_confidence"],
-            "last_updated": benchmark["last_updated"],
+            "last_updated": selected_project.get("last_activity_at") if selected_project else None,
         },
+    }
+
+
+def project_failure_analysis_payload(project_id: str, limit: int = 500) -> Dict[str, Any]:
+    with connect() as db:
+        workflow_rows = db.execute(
+            """SELECT workflow_id, workflow_name, status, success, total_latency_ms, retries,
+                      started_at, completed_at FROM sdk_workflows
+               WHERE project_id = ? ORDER BY started_at DESC LIMIT ?""",
+            (project_id, limit),
+        ).fetchall()
+        error_rows = db.execute(
+            """SELECT sdk_events.error_type, sdk_events.error_message, sdk_events.created_at,
+                      sdk_workflows.workflow_id, sdk_workflows.workflow_name
+               FROM sdk_events JOIN sdk_workflows ON sdk_workflows.workflow_id = sdk_events.workflow_id
+               WHERE sdk_workflows.project_id = ? AND (sdk_events.event_type = 'error' OR sdk_events.success = 0)
+               ORDER BY sdk_events.created_at DESC LIMIT ?""",
+            (project_id, limit),
+        ).fetchall()
+    total = len(workflow_rows)
+    failed_workflows = [row for row in workflow_rows if row["success"] == 0 or row["status"] == "failed"]
+    category_counts = Counter(normalize_failure_category(row["error_type"] or row["error_message"]) for row in error_rows)
+    if failed_workflows and not category_counts:
+        category_counts["workflow_failure"] = len(failed_workflows)
+    failed_count = len(failed_workflows)
+    top_causes = [
+        {"category": key, "label": key.replace("_", " ").title(), "count": count,
+         "percentage": round(count / max(1, sum(category_counts.values())) * 100.0, 2)}
+        for key, count in category_counts.most_common(10)
+    ]
+    trends = Counter(str(row["completed_at"] or row["started_at"] or "")[:10] for row in failed_workflows)
+    failures = [{
+        "source": "sdk", "workflow_id": row["workflow_id"], "workflow_name": row["workflow_name"],
+        "failure_reason": "workflow_failed", "failure_category": "workflow_failure",
+        "execution_duration": round(float(row["total_latency_ms"] or 0) / 1000.0, 3),
+        "retry_count": int(row["retries"] or 0), "created_at": row["completed_at"] or row["started_at"],
+        "timestamp": row["completed_at"] or row["started_at"],
+    } for row in failed_workflows]
+    avg_duration = round(sum(item["execution_duration"] for item in failures) / max(1, failed_count), 3)
+    avg_retries = round(sum(item["retry_count"] for item in failures) / max(1, failed_count), 3)
+    rate = round(failed_count / total * 100.0, 2) if total else 0.0
+    return {
+        "project_id": project_id,
+        "summary": {"total_workflows": total, "failed_workflows": failed_count, "failure_rate": rate,
+                    "average_execution_duration": avg_duration, "average_retry_count": avg_retries,
+                    "reliability_impact_score": rate},
+        "top_failure_causes": top_causes,
+        "failure_trends": [{"date": date, "failures": count} for date, count in sorted(trends.items()) if date],
+        "unstable_workflows": [],
+        "recommendations": failure_recommendations(failures, top_causes, rate, avg_duration, avg_retries),
+        "failed_workflows": failures[:50],
     }
 
 
@@ -5450,6 +5741,10 @@ def dashboard_asset_check() -> Dict[str, Any]:
         "forgot_password.html": BASE_DIR / "forgot_password.html",
         "reset_password.html": BASE_DIR / "reset_password.html",
         "projects.html": BASE_DIR / "projects.html",
+        "project_detail.html": BASE_DIR / "project_detail.html",
+        "project_detail.js": BASE_DIR / "project_detail.js",
+        "billing.html": BASE_DIR / "billing.html",
+        "billing.js": BASE_DIR / "billing.js",
         "api_keys.html": BASE_DIR / "api_keys.html",
         "saas.css": BASE_DIR / "saas.css",
         "saas.js": BASE_DIR / "saas.js",
@@ -5599,7 +5894,7 @@ if ALLOWED_ORIGINS:
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -5656,8 +5951,7 @@ PERSISTED_CONTROL_PLANE_PREFIXES = (
     "/api/install",
     "/api/organizations",
     "/api/projects",
-    "/api/sdk/connect",
-    "/api/sdk/installations",
+    "/api/sdk",
 )
 
 
@@ -6181,6 +6475,27 @@ def reset_password_page() -> FileResponse:
 @app.get("/projects", include_in_schema=False)
 def projects_page(request: Request) -> Response:
     return protected_page(request, "projects.html")
+
+
+@app.get("/projects/{project_id}", include_in_schema=False)
+def project_detail_page(project_id: str, request: Request) -> Response:
+    del project_id
+    return protected_page(request, "project_detail.html")
+
+
+@app.get("/project_detail.js", include_in_schema=False)
+def project_detail_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "project_detail.js", media_type="application/javascript")
+
+
+@app.get("/billing", include_in_schema=False)
+def billing_page(request: Request) -> Response:
+    return protected_page(request, "billing.html")
+
+
+@app.get("/billing.js", include_in_schema=False)
+def billing_script() -> FileResponse:
+    return FileResponse(BASE_DIR / "billing.js", media_type="application/javascript")
 
 
 @app.get("/api-keys", include_in_schema=False)
@@ -6925,13 +7240,24 @@ def list_plans() -> Dict[str, Any]:
                    created_at, metadata_json
             FROM plans
             ORDER BY
-                CASE id WHEN 'free' THEN 1 WHEN 'pro' THEN 2 WHEN 'enterprise' THEN 3 ELSE 4 END
+                CASE id WHEN 'free' THEN 1 WHEN 'developer' THEN 2 WHEN 'pro' THEN 3 WHEN 'business' THEN 4 WHEN 'enterprise' THEN 5 ELSE 6 END
             """
         ).fetchall()
     plans = []
     for row in rows:
         plan = row_to_dict(row)
-        plan["metadata"] = json.loads(plan.pop("metadata_json") or "{}")
+        metadata = json.loads(plan.pop("metadata_json") or "{}")
+        plan.update({
+            "price": metadata.get("price", "Configurable"),
+            "monthly_price": metadata.get("monthly_price"),
+            "monthly_telemetry_limit": metadata.get("monthly_telemetry_limit"),
+            "max_team_members": metadata.get("max_team_members"),
+            "retention_days": metadata.get("retention_days"),
+            "max_installations": metadata.get("max_installations"),
+            "features": metadata.get("features", {}),
+            "audience": metadata.get("audience", ""),
+            "metadata": metadata,
+        })
         plans.append(plan)
     return {"ok": True, "plans": plans}
 
@@ -7358,11 +7684,16 @@ def create_project(payload: ProjectCreate, user: Dict[str, Any] = Depends(curren
             organization_role = membership["role"]
         db.execute(
             """
-            INSERT INTO projects (id, user_id, organization_id, name, created_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO projects (id, user_id, organization_id, name, status, environment, created_at, updated_at)
+            VALUES (?, ?, ?, ?, 'offline', ?, ?, ?)
             """,
-            (project_id, user["id"], organization_id, payload.name.strip(), created_at),
+            (project_id, user["id"], organization_id, payload.name.strip(), payload.environment.strip(), created_at, created_at),
         )
+        if not db.execute("SELECT 1 FROM user_preferences WHERE user_id = ?", (user["id"],)).fetchone():
+            db.execute(
+                "INSERT INTO user_preferences (user_id, current_project_id, updated_at) VALUES (?, ?, ?)",
+                (user["id"], project_id, created_at),
+            )
         record_analytics_event(
             db,
             "project_created",
@@ -7380,6 +7711,8 @@ def create_project(payload: ProjectCreate, user: Dict[str, Any] = Depends(curren
             "organization_name": organization_name,
             "organization_role": organization_role,
             "name": payload.name.strip(),
+            "status": "offline",
+            "environment": payload.environment.strip(),
             "created_at": created_at,
         },
     }
@@ -7389,36 +7722,91 @@ def create_project(payload: ProjectCreate, user: Dict[str, Any] = Depends(curren
 def list_projects(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     init_db()
     with connect() as db:
-        rows = db.execute(
-            """
-            SELECT projects.*,
-                   organizations.name AS organization_name,
-                   organization_members.role AS organization_role,
-                   COUNT(DISTINCT sdk_workflows.workflow_id) AS workflow_count,
-                   COUNT(DISTINCT api_keys.id) AS api_key_count
-            FROM projects
-            LEFT JOIN organizations ON organizations.id = projects.organization_id
-            LEFT JOIN organization_members
-                   ON organization_members.organization_id = projects.organization_id
-                  AND organization_members.user_id = ?
-            LEFT JOIN sdk_workflows ON sdk_workflows.project_id = projects.id
-            LEFT JOIN api_keys ON api_keys.project_id = projects.id AND api_keys.is_active = 1
-            WHERE projects.user_id = ? OR organization_members.user_id = ?
-            GROUP BY projects.id
-            ORDER BY projects.created_at DESC
-            """,
-            (user["id"], user["id"], user["id"]),
-        ).fetchall()
-    return {"ok": True, "projects": [row_to_dict(row) for row in rows]}
+        projects = project_summary_rows(db, user["id"])
+        current_project = current_project_for_user(db, user["id"])
+        for project in projects:
+            project["is_current"] = bool(current_project and project["id"] == current_project["id"])
+            project["api_key_count"] = int(db.execute(
+                "SELECT COUNT(*) FROM api_keys WHERE project_id = ? AND is_active = 1", (project["id"],)
+            ).fetchone()[0])
+    return {"ok": True, "projects": projects, "current_project": current_project}
 
 
 @app.get("/api/projects/{project_id}")
 def get_project(project_id: str, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
     init_db()
     with connect() as db:
-        project = user_project_or_404(db, user["id"], project_id)
-        workflows = dashboard_sdk_payload([project_id])
-    return {"ok": True, "project": row_to_dict(project), "sdk_workflows": workflows}
+        user_project_or_404(db, user["id"], project_id)
+        project = next(item for item in project_summary_rows(db, user["id"]) if item["id"] == project_id)
+        workflows = db.execute(
+            """SELECT workflow_id, installation_id, session_id, app_user_id, workflow_name, status,
+                      success, reliability_score, total_latency_ms, model_calls, tool_calls, retries,
+                      errors, guardrail_actions, started_at, completed_at
+               FROM sdk_workflows WHERE project_id = ? ORDER BY started_at DESC LIMIT 100""",
+            (project_id,),
+        ).fetchall()
+        installations = db.execute(
+            """SELECT id, device_label, operating_system, runtime, environment, first_seen_at,
+                      last_seen_at, status FROM installations WHERE project_id = ? ORDER BY last_seen_at DESC""",
+            (project_id,),
+        ).fetchall()
+        sessions = db.execute(
+            """SELECT COALESCE(session_id, 'Unidentified session') AS session_id, app_user_id,
+                      COUNT(*) AS workflow_count, MAX(COALESCE(completed_at, started_at)) AS last_seen_at
+               FROM sdk_workflows WHERE project_id = ? GROUP BY session_id, app_user_id ORDER BY last_seen_at DESC""",
+            (project_id,),
+        ).fetchall()
+        usage = db.execute(
+            """SELECT metric_type, COALESCE(SUM(quantity), 0) AS total FROM usage_records
+               WHERE project_id = ? GROUP BY metric_type""", (project_id,),
+        ).fetchall()
+        failure_count = int(db.execute(
+            "SELECT COUNT(*) FROM sdk_workflows WHERE project_id = ? AND (success = 0 OR status = 'failed')",
+            (project_id,),
+        ).fetchone()[0])
+    return {
+        "ok": True, "project": project,
+        "workflows": [row_to_dict(row) for row in workflows],
+        "installations": [row_to_dict(row) for row in installations],
+        "sessions": [row_to_dict(row) for row in sessions],
+        "usage": {row["metric_type"]: int(row["total"] or 0) for row in usage},
+        "summary": {"failures": failure_count, "human_interventions": 0},
+        "sdk_workflows": dashboard_sdk_payload([project_id]),
+    }
+
+
+@app.post("/api/projects/current")
+def set_current_project(payload: CurrentProjectUpdate, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+    init_db()
+    with connect() as db:
+        user_project_or_404(db, user["id"], payload.project_id)
+        archived = db.execute("SELECT archived_at FROM projects WHERE id = ?", (payload.project_id,)).fetchone()
+        if archived and archived["archived_at"]:
+            raise HTTPException(status_code=409, detail="Archived projects cannot be selected.")
+        db.execute(
+            """INSERT INTO user_preferences (user_id, current_project_id, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(user_id) DO UPDATE SET current_project_id = excluded.current_project_id, updated_at = excluded.updated_at""",
+            (user["id"], payload.project_id, now_iso()),
+        )
+        project = current_project_for_user(db, user["id"])
+    return {"ok": True, "current_project": project}
+
+
+@app.patch("/api/projects/{project_id}")
+def update_project(project_id: str, payload: ProjectUpdate, user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
+    init_db()
+    with connect() as db:
+        project = project_permission_or_404(db, user["id"], project_id, "admin")
+        name = payload.name.strip() if payload.name else project["name"]
+        environment = payload.environment.strip() if payload.environment else project["environment"]
+        archived_at = now_iso() if payload.archived is True else None if payload.archived is False else project["archived_at"]
+        metadata = payload.metadata if payload.metadata is not None else parse_json_object(project["metadata_json"])
+        db.execute(
+            "UPDATE projects SET name = ?, environment = ?, archived_at = ?, updated_at = ?, metadata_json = ? WHERE id = ?",
+            (name, environment, archived_at, now_iso(), json_dumps(metadata), project_id),
+        )
+        updated = next(item for item in project_summary_rows(db, user["id"]) if item["id"] == project_id)
+    return {"ok": True, "project": updated}
 
 
 @app.post("/api/projects/{project_id}/connection-token")
@@ -7667,8 +8055,11 @@ def delete_project_api_key(
 
 
 @app.get("/api/me/dashboard")
-def api_me_dashboard(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any]:
-    return {"ok": True, **user_dashboard_payload(user)}
+def api_me_dashboard(
+    project_id: Optional[str] = Query(None, max_length=180),
+    user: Dict[str, Any] = Depends(current_user),
+) -> Dict[str, Any]:
+    return {"ok": True, **user_dashboard_payload(user, project_id)}
 
 
 @app.get("/api/dashboard")
@@ -7714,9 +8105,20 @@ def api_dashboard_recovery_analytics() -> Dict[str, Any]:
 @app.get("/api/failure-analysis")
 def api_failure_analysis(
     limit: int = Query(500, ge=1, le=2000),
-    _: Dict[str, Any] = Depends(current_user),
+    project_id: Optional[str] = Query(None, max_length=180),
+    user: Dict[str, Any] = Depends(current_user),
 ) -> Dict[str, Any]:
-    return {"ok": True, **failure_analysis_payload(limit)}
+    init_db()
+    with connect() as db:
+        if project_id:
+            user_project_or_404(db, user["id"], project_id)
+            selected_id = project_id
+        else:
+            selected = current_project_for_user(db, user["id"])
+            selected_id = selected["id"] if selected else None
+    if not selected_id:
+        return {"ok": True, **project_failure_analysis_payload("", limit)}
+    return {"ok": True, **project_failure_analysis_payload(selected_id, limit)}
 
 
 @app.get("/api/copilot/recommendations")
@@ -7883,6 +8285,14 @@ def sdk_exchange_connection_token(payload: SDKConnectionExchange) -> Dict[str, A
         if expiry <= timestamp:
             raise HTTPException(status_code=410, detail="Matrixs connection token has expired.")
 
+        existing_installation = db.execute(
+            "SELECT id, project_id FROM installations WHERE id = ?",
+            (installation_id,),
+        ).fetchone()
+        if existing_installation and existing_installation["project_id"] != token_row["project_id"]:
+            raise HTTPException(status_code=409, detail="Installation id is already assigned to another project.")
+        if not existing_installation:
+            enforce_limit(db, token_row["user_id"], "installations")
         generated_key = generate_api_key()
         api_key_id = f"key_{uuid.uuid4().hex}"
         db.execute(
@@ -7937,12 +8347,32 @@ def sdk_exchange_connection_token(payload: SDKConnectionExchange) -> Dict[str, A
                 "source": "matrixs_connect",
             },
         )
+        device_label = payload.device_label or "Matrixs-connected device"
+        db.execute(
+            """INSERT INTO installations (
+                   id, project_id, user_id, api_key_id, device_label, operating_system,
+                   runtime, environment, first_seen_at, last_seen_at, status, metadata_json
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', ?)
+               ON CONFLICT(id) DO UPDATE SET api_key_id = excluded.api_key_id,
+                   device_label = excluded.device_label, operating_system = excluded.operating_system,
+                   runtime = excluded.runtime, environment = excluded.environment,
+                   last_seen_at = excluded.last_seen_at, status = 'connected', metadata_json = excluded.metadata_json""",
+            (
+                installation_id, token_row["project_id"], token_row["user_id"], api_key_id,
+                device_label, payload.operating_system or "Unknown", payload.runtime or "Unknown",
+                payload.environment, timestamp.isoformat(), timestamp.isoformat(), json_dumps(payload.metadata),
+            ),
+        )
+        db.execute(
+            "UPDATE projects SET status = 'connected', environment = ?, updated_at = ?, last_seen_at = ? WHERE id = ?",
+            (payload.environment, timestamp.isoformat(), timestamp.isoformat(), token_row["project_id"]),
+        )
     return {
         "ok": True,
         "project": {"id": token_row["project_id"], "name": token_row["project_name"]},
         "installation": {
             "id": installation_id,
-            "device_label": payload.device_label or "Matrixs-connected device",
+            "device_label": device_label,
         },
         "api_key": generated_key["api_key"],
         "api_key_prefix": generated_key["key_prefix"],
@@ -7958,6 +8388,50 @@ def _record_sdk_installation_state(
     init_db()
     timestamp = now_iso()
     with closing(connect()) as db, db:
+        existing = db.execute(
+            "SELECT id, project_id FROM installations WHERE id = ?",
+            (payload.installation_id,),
+        ).fetchone()
+        if existing and existing["project_id"] != api_key_context["project_id"]:
+            raise HTTPException(status_code=409, detail="Installation id is already assigned to another project.")
+        if event_type == "matrixs_installation_registered" and not existing:
+            enforce_limit(db, api_key_context["user_id"], "installations")
+        state = "connected" if event_type == "matrixs_installation_registered" else "disconnected"
+        db.execute(
+            """INSERT INTO installations (
+                   id, project_id, user_id, api_key_id, device_label, operating_system,
+                   runtime, environment, first_seen_at, last_seen_at, status, metadata_json
+               ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   api_key_id = excluded.api_key_id,
+                   device_label = excluded.device_label,
+                   operating_system = excluded.operating_system,
+                   runtime = excluded.runtime,
+                   environment = excluded.environment,
+                   last_seen_at = excluded.last_seen_at,
+                   status = excluded.status,
+                   metadata_json = excluded.metadata_json""",
+            (
+                payload.installation_id, api_key_context["project_id"], api_key_context["user_id"],
+                api_key_context["api_key_id"], payload.device_label or "Matrixs-connected device",
+                payload.operating_system or "Unknown", payload.runtime or "Unknown", payload.environment,
+                timestamp, timestamp, state, json_dumps(payload.metadata),
+            ),
+        )
+        if state == "disconnected":
+            connected_count = int(db.execute(
+                "SELECT COUNT(*) FROM installations WHERE project_id = ? AND status IN ('active', 'connected')",
+                (api_key_context["project_id"],),
+            ).fetchone()[0])
+            project_state = "connected" if connected_count else "disconnected"
+        else:
+            project_state = state
+        db.execute(
+            """UPDATE projects SET status = ?, environment = ?, updated_at = ?,
+                      last_seen_at = CASE WHEN ? = 'connected' THEN ? ELSE last_seen_at END
+               WHERE id = ?""",
+            (project_state, payload.environment, timestamp, state, timestamp, api_key_context["project_id"]),
+        )
         record_analytics_event(
             db,
             event_type,
@@ -7978,7 +8452,7 @@ def _record_sdk_installation_state(
         "installation": {
             "id": payload.installation_id,
             "project_id": api_key_context["project_id"],
-            "state": "connected" if event_type == "matrixs_installation_registered" else "disconnected",
+            "state": state,
             "updated_at": timestamp,
         },
     }
@@ -8046,22 +8520,33 @@ def sdk_test_workflow(
         **payload.metadata,
     }
     with connect() as db:
+        installation_id = metadata.get("installation_id")
+        if installation_id and not db.execute(
+            "SELECT 1 FROM installations WHERE id = ? AND project_id = ?",
+            (installation_id, api_key_context["project_id"]),
+        ).fetchone():
+            installation_id = None
         enforce_limit(db, api_key_context["user_id"], "workflows")
         db.execute(
             """
             INSERT INTO sdk_workflows (
                 workflow_id, user_id, project_id, api_key_id,
+                installation_id, session_id, app_user_id,
                 project_name, workflow_name, status, success, confidence,
                 predicted_failure_probability, guardrail_action, total_latency_ms,
+                reliability_score, model_calls, tool_calls, guardrail_actions,
                 started_at, completed_at, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'completed', 1, 0.99, 0.05, 'continue', 46, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'completed', 1, 0.99, 0.05, 'continue', 46, 95.0, 1, 1, 1, ?, ?, ?)
             """,
             (
                 workflow_id,
                 api_key_context["user_id"],
                 api_key_context["project_id"],
                 api_key_context["api_key_id"],
+                installation_id,
+                metadata.get("session_id"),
+                metadata.get("app_user_id"),
                 project_name,
                 workflow_name,
                 started_at,
@@ -8154,6 +8639,14 @@ def sdk_start_workflow(
     composio_context = get_composio_tool_context(api_key_context["user_id"])
     started_at = now_iso()
     with connect() as db:
+        installation_id = payload.installation_id or payload.metadata.get("installation_id")
+        if installation_id:
+            installation = db.execute(
+                "SELECT id FROM installations WHERE id = ? AND project_id = ?",
+                (installation_id, api_key_context["project_id"]),
+            ).fetchone()
+            if not installation:
+                raise HTTPException(status_code=404, detail="Installation not found for this project.")
         existing_workflow = db.execute(
             "SELECT workflow_id FROM sdk_workflows WHERE workflow_id = ?",
             (workflow_id,),
@@ -8164,17 +8657,21 @@ def sdk_start_workflow(
             """
             INSERT OR REPLACE INTO sdk_workflows (
                 workflow_id, user_id, project_id, api_key_id,
+                installation_id, session_id, app_user_id,
                 project_name, workflow_name, status, success, confidence,
                 predicted_failure_probability, guardrail_action, total_latency_ms,
                 started_at, completed_at, metadata_json
             )
-            VALUES (?, ?, ?, ?, ?, ?, 'running', NULL, NULL, NULL, NULL, 0, ?, NULL, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', NULL, NULL, NULL, NULL, 0, ?, NULL, ?)
             """,
             (
                 workflow_id,
                 api_key_context["user_id"],
                 api_key_context["project_id"],
                 api_key_context["api_key_id"],
+                installation_id,
+                payload.session_id or payload.metadata.get("session_id"),
+                payload.app_user_id or payload.metadata.get("app_user_id"),
                 payload.project_name,
                 payload.workflow_name,
                 started_at,
@@ -8550,12 +9047,22 @@ def sdk_complete_workflow(
         total_latency_ms = payload.total_latency_ms if payload.total_latency_ms is not None else calculated_latency
         probability = sdk_failure_probability_from_events(events)
         guardrail = sdk_guardrail_action(probability)
+        model_calls = sum(1 for event in events if event["event_type"] == "model_call")
+        tool_calls = sum(1 for event in events if event["event_type"] == "tool_call")
+        errors = sum(1 for event in events if event["event_type"] == "error" or event["success"] == 0)
+        retries = sdk_retry_count(events)
+        guardrail_actions = sum(1 for event in events if event["event_type"] == "guardrail")
+        if guardrail["action"] != "continue":
+            guardrail_actions += 1
+        reliability_score = round(max(0.0, (1.0 - probability) * 100.0), 2)
         db.execute(
             """
             UPDATE sdk_workflows
             SET status = 'completed', success = ?, confidence = ?,
                 predicted_failure_probability = ?, guardrail_action = ?,
-                total_latency_ms = ?, completed_at = ?, metadata_json = ?
+                total_latency_ms = ?, reliability_score = ?, model_calls = ?,
+                tool_calls = ?, retries = ?, errors = ?, guardrail_actions = ?,
+                completed_at = ?, metadata_json = ?
             WHERE workflow_id = ?
             """,
             (
@@ -8564,6 +9071,12 @@ def sdk_complete_workflow(
                 probability,
                 guardrail["action"],
                 total_latency_ms,
+                reliability_score,
+                model_calls,
+                tool_calls,
+                retries,
+                errors,
+                guardrail_actions,
                 completed_at,
                 json_dumps(payload.metadata),
                 payload.workflow_id,
