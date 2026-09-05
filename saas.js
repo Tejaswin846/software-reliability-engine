@@ -180,6 +180,33 @@ function formatProjectDate(value) {
   return date.toLocaleDateString();
 }
 
+let openedProjectId = null;
+
+function renderProjectCredentials(project) {
+  const keys = Array.isArray(project.api_keys) ? project.api_keys : [];
+  const activeKeys = keys.filter((key) => key.is_active);
+  const keyContent = activeKeys.length ? activeKeys.map((key) => `
+    <div class="project-key-record">
+      <div><span class="field-label">API Key</span><code>${escapeHtml(key.masked_key || `${key.key_prefix}••••••••`)}</code></div>
+      <dl class="key-metadata"><div><dt>Created</dt><dd>${escapeHtml(new Date(key.created_at).toLocaleString())}</dd></div><div><dt>Last used</dt><dd>${escapeHtml(formatProjectDate(key.last_used_at))}</dd></div></dl>
+      <div class="credential-actions"><button class="secondary" data-regenerate-project-key="${escapeHtml(project.id)}">Regenerate</button><button class="danger" data-revoke-project-key="${escapeHtml(project.id)}" data-key-id="${escapeHtml(key.id)}">Revoke</button></div>
+    </div>`).join("") : `
+    <div class="no-key-state"><p>No API key created yet.</p><button data-generate-project-key="${escapeHtml(project.id)}">Generate API Key</button></div>`;
+  return `
+    <section class="project-credentials" aria-labelledby="credentials-title-${escapeHtml(project.id)}">
+      <div class="credential-id-row"><div><span class="field-label">Project ID</span><code>${escapeHtml(project.id)}</code></div><button class="secondary" data-copy-value="${escapeHtml(project.id)}">Copy Project ID</button></div>
+      <div class="credential-heading"><div><span class="field-label">API Keys</span><h3 id="credentials-title-${escapeHtml(project.id)}">Project credentials</h3></div><span class="security-note">Secrets are shown once</span></div>
+      ${keyContent}
+      <div class="raw-key-panel" id="raw-key-panel-${escapeHtml(project.id)}" hidden>
+        <strong>API key created</strong><p>Copy this key now. Matrixs cannot show it again after you leave or reload this page.</p>
+        <label class="sr-only" for="raw-key-${escapeHtml(project.id)}">New API key</label>
+        <input id="raw-key-${escapeHtml(project.id)}" type="password" readonly autocomplete="off" spellcheck="false">
+        <div class="credential-actions"><button class="secondary" data-toggle-raw-key="${escapeHtml(project.id)}">Show</button><button data-copy-target="raw-key-${escapeHtml(project.id)}" data-copy-message="credential-message-${escapeHtml(project.id)}">Copy API Key</button></div>
+      </div>
+      <div id="credential-message-${escapeHtml(project.id)}" class="message" role="status"></div>
+    </section>`;
+}
+
 async function loadProjects() {
   const list = document.getElementById("project-list");
   const select = document.getElementById("project-select");
@@ -188,17 +215,19 @@ async function loadProjects() {
   const response = await api("/api/projects");
   if (list) {
     list.innerHTML = response.projects.length ? response.projects.map((project) => `
-      <article class="project-card ${project.is_current ? "current" : ""} ${project.status === "archived" ? "archived" : ""}">
-        <header><div><span class="status-badge status-${escapeHtml(project.status)}"><i></i>${escapeHtml(project.status)}</span><h2><a href="/projects/${encodeURIComponent(project.id)}">${escapeHtml(project.name)}</a></h2></div>${project.is_current ? '<span class="current-chip">Current</span>' : ""}</header>
-        <code>${escapeHtml(project.id)}</code>
+      <details class="project-card ${project.is_current ? "current" : ""} ${project.status === "archived" ? "archived" : ""}" ${openedProjectId === project.id ? "open" : ""}>
+        <summary><div><span class="status-badge status-${escapeHtml(project.status)}"><i></i>${escapeHtml(project.status)}</span><h2>${escapeHtml(project.name)}</h2><span class="project-summary-id">${escapeHtml(project.id)}</span></div><div class="summary-actions">${project.is_current ? '<span class="current-chip">Current</span>' : ""}<span class="expand-label">Project details</span></div></summary>
+        <div class="project-card-body">
+        ${renderProjectCredentials(project)}
         <dl class="project-facts">
           <div><dt>Device</dt><dd>${escapeHtml(project.device_label || "No installation")}</dd></div><div><dt>Environment</dt><dd>${escapeHtml(project.environment || "Development")}</dd></div>
           <div><dt>Workflows</dt><dd>${Number(project.workflow_count || 0).toLocaleString()}</dd></div><div><dt>Reliability</dt><dd>${Number(project.reliability_score || 0).toFixed(1)}%</dd></div>
           <div><dt>Last activity</dt><dd>${formatProjectDate(project.last_activity_at)}</dd></div><div><dt>Installations</dt><dd>${Number(project.connected_installation_count || 0)} connected</dd></div>
           <div><dt>Created</dt><dd>${formatProjectDate(project.created_at)}</dd></div>
         </dl>
-        <footer><a class="button secondary" href="/projects/${encodeURIComponent(project.id)}">View details</a><button class="secondary" data-copy-value="${escapeHtml(project.id)}">Copy Project ID</button>${project.status !== "archived" ? `<button class="secondary" data-select-project="${escapeHtml(project.id)}">Make current</button><button class="secondary" data-archive-project="${escapeHtml(project.id)}">Archive</button>` : `<button class="secondary" data-unarchive-project="${escapeHtml(project.id)}">Restore</button>`}<button class="danger" data-delete-project="${escapeHtml(project.id)}">Delete</button></footer>
-      </article>`).join("") : `<div class="empty-state"><h2>You haven't connected any projects yet.</h2><p>Create a project above or open Setup to connect your application.</p><a class="button" href="/onboarding">Open setup</a></div>`;
+        <footer><a class="button secondary" href="/projects/${encodeURIComponent(project.id)}">View full details</a>${project.status !== "archived" ? `<button class="secondary" data-select-project="${escapeHtml(project.id)}">Make current</button><button class="secondary" data-archive-project="${escapeHtml(project.id)}">Archive</button>` : `<button class="secondary" data-unarchive-project="${escapeHtml(project.id)}">Restore</button>`}<button class="danger" data-delete-project="${escapeHtml(project.id)}">Delete</button></footer>
+        </div>
+      </details>`).join("") : `<div class="empty-state"><h2>You haven't connected any projects yet.</h2><p>Create a project above or open Setup to connect your application.</p><a class="button" href="/onboarding">Open setup</a></div>`;
     const count = document.getElementById("project-count");
     if (count) count.textContent = `${response.projects.length} project${response.projects.length === 1 ? "" : "s"}`;
   }
@@ -226,8 +255,9 @@ function initProjects() {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     try {
-      await api("/api/projects", { method: "POST", body: JSON.stringify({ name: form.name.value, environment: form.environment?.value || "development" }) });
-      form.reset(); showMessage("project-message", "Project created.", "success"); await loadProjects();
+      const response = await api("/api/projects", { method: "POST", body: JSON.stringify({ name: form.name.value, environment: form.environment?.value || "development" }) });
+      openedProjectId = response.project.id;
+      form.reset(); showMessage("project-message", "Project created. Its credentials are ready below.", "success"); await loadProjects();
     } catch (error) { showMessage("project-message", error.message, "error"); }
   });
   document.getElementById("current-project-select")?.addEventListener("change", async (event) => {
@@ -238,11 +268,38 @@ function initProjects() {
   document.addEventListener("click", async (event) => {
     const copyButton = event.target.closest("[data-copy-value]");
     if (copyButton) { await copyText(copyButton.dataset.copyValue, "project-message", "Project ID copied."); return; }
+    const copyTargetButton = event.target.closest("[data-copy-target]");
+    if (copyTargetButton) {
+      const target = document.getElementById(copyTargetButton.dataset.copyTarget);
+      if (target?.value) await copyText(target.value, copyTargetButton.dataset.copyMessage, "API key copied.");
+      return;
+    }
     const selectButton = event.target.closest("[data-select-project]");
     const archiveButton = event.target.closest("[data-archive-project], [data-unarchive-project]");
     const deleteButton = event.target.closest("[data-delete-project]");
+    const generateButton = event.target.closest("[data-generate-project-key]");
+    const regenerateButton = event.target.closest("[data-regenerate-project-key]");
+    const revokeButton = event.target.closest("[data-revoke-project-key]");
+    const toggleButton = event.target.closest("[data-toggle-raw-key]");
     try {
-      if (selectButton) await api("/api/projects/current", { method: "POST", body: JSON.stringify({ project_id: selectButton.dataset.selectProject }) });
+      if (toggleButton) {
+        const input = document.getElementById(`raw-key-${toggleButton.dataset.toggleRawKey}`);
+        const showing = input.type === "text"; input.type = showing ? "password" : "text"; toggleButton.textContent = showing ? "Show" : "Hide"; return;
+      } else if (generateButton || regenerateButton) {
+        const id = generateButton?.dataset.generateProjectKey || regenerateButton.dataset.regenerateProjectKey;
+        if (regenerateButton && !window.confirm("Regenerate this API key? The current key will stop working immediately.")) return;
+        const path = regenerateButton ? `/api/projects/${id}/api-keys/regenerate` : `/api/projects/${id}/api-keys`;
+        const response = await api(path, { method: "POST", body: "{}" });
+        openedProjectId = id; await loadProjects();
+        const panel = document.getElementById(`raw-key-panel-${id}`); const input = document.getElementById(`raw-key-${id}`);
+        input.value = response.api_key; panel.hidden = false; input.focus();
+        showMessage(`credential-message-${id}`, "API key created. Copy it before leaving this page.", "success"); return;
+      } else if (revokeButton) {
+        const id = revokeButton.dataset.revokeProjectKey;
+        if (!window.confirm("Revoke this API key? It will stop working immediately.")) return;
+        await api(`/api/projects/${id}/api-keys/${revokeButton.dataset.keyId}`, { method: "DELETE" });
+        openedProjectId = id; await loadProjects(); showMessage(`credential-message-${id}`, "API key revoked.", "success"); return;
+      } else if (selectButton) await api("/api/projects/current", { method: "POST", body: JSON.stringify({ project_id: selectButton.dataset.selectProject }) });
       else if (archiveButton) { const id = archiveButton.dataset.archiveProject || archiveButton.dataset.unarchiveProject; await api(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify({ archived: Boolean(archiveButton.dataset.archiveProject) }) }); }
       else if (deleteButton) { if (!window.confirm("Permanently delete this project and its telemetry?")) return; await api(`/api/projects/${deleteButton.dataset.deleteProject}`, { method: "DELETE" }); }
       else return;

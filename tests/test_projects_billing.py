@@ -133,6 +133,55 @@ class ProjectsAndBillingTests(unittest.TestCase):
         self.assertIn("No billing history yet", (Path(app.BASE_DIR) / "billing.js").read_text(encoding="utf-8"))
         self.assertIn("No workflows have been recorded", (Path(app.BASE_DIR) / "project_detail.js").read_text(encoding="utf-8"))
 
+    def test_project_credentials_are_persistent_masked_and_embedded_in_project_views(self) -> None:
+        self.unlock_developer_plan()
+        project = self.create_project("Credential card")
+        created = self.client.post(
+            f"/api/projects/{project['id']}/api-keys", headers=self.headers, json={},
+        )
+        self.assertEqual(created.status_code, 200, created.text)
+        raw_key = created.json()["api_key"]
+        key_id = created.json()["key"]["id"]
+
+        listed = self.client.get(f"/api/projects/{project['id']}/api-keys", headers=self.headers).json()
+        project_list = self.client.get("/api/projects", headers=self.headers).json()
+        project_detail = self.client.get(f"/api/projects/{project['id']}", headers=self.headers).json()
+        safe_key = next(key for key in listed["api_keys"] if key["id"] == key_id)
+        self.assertTrue(safe_key["masked_key"].endswith(raw_key[-4:]))
+        self.assertEqual(safe_key["status"], "active")
+        for payload in (listed, project_list, project_detail):
+            self.assertNotIn(raw_key, str(payload))
+            self.assertNotIn("key_hash", str(payload))
+        card_project = next(item for item in project_list["projects"] if item["id"] == project["id"])
+        self.assertEqual(card_project["api_keys"][0]["id"], key_id)
+        self.assertEqual(project_detail["api_keys"][0]["id"], key_id)
+        with app.connect() as db:
+            stored = db.execute("SELECT key_hash, key_suffix, status FROM api_keys WHERE id = ?", (key_id,)).fetchone()
+        self.assertNotEqual(stored["key_hash"], raw_key)
+        self.assertEqual(stored["key_suffix"], raw_key[-4:])
+        self.assertEqual(stored["status"], "active")
+
+        projects_js = (Path(app.BASE_DIR) / "saas.js").read_text(encoding="utf-8")
+        details_html = (Path(app.BASE_DIR) / "project_detail.html").read_text(encoding="utf-8")
+        self.assertIn("openedProjectId = response.project.id", projects_js)
+        self.assertIn('data-copy-value="${escapeHtml(project.id)}"', projects_js)
+        self.assertIn("Generate API Key", projects_js)
+        self.assertIn("Copy Project ID", details_html)
+
+    def test_other_user_cannot_generate_or_revoke_project_keys(self) -> None:
+        self.unlock_developer_plan()
+        project = self.create_project("Owner only credentials")
+        generated = self.client.post(f"/api/projects/{project['id']}/api-keys", headers=self.headers, json={})
+        key_id = generated.json()["key"]["id"]
+        with app.connect() as db:
+            now = app.now_iso()
+            db.execute("INSERT INTO users (id, email, password_hash, created_at) VALUES ('usr_key_intruder', 'intruder@example.com', 'x', ?)", (now,))
+            app.ensure_default_subscriptions(db)
+        intruder = {"Authorization": f"Bearer {app.create_access_token('usr_key_intruder')['access_token']}"}
+        self.assertEqual(self.client.post(f"/api/projects/{project['id']}/api-keys", headers=intruder, json={}).status_code, 404)
+        self.assertEqual(self.client.delete(f"/api/projects/{project['id']}/api-keys/{key_id}", headers=intruder).status_code, 404)
+        self.assertEqual(self.client.get("/api/sdk/status", headers={"X-Matrixs-API-Key": generated.json()["api_key"]}).status_code, 200)
+
 
 if __name__ == "__main__":
     unittest.main()

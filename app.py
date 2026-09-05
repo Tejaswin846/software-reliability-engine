@@ -200,7 +200,7 @@ except ImportError:
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "data"
 APP_NAME = os.getenv("MATRIXS_APP_NAME") or os.getenv("SOFTWARE_APP_NAME", "Matrixs")
-APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.7.0")
+APP_VERSION = os.getenv("MATRIXS_VERSION") or os.getenv("SOFTWARE_VERSION", "0.7.1")
 ENVIRONMENT = os.getenv("SOFTWARE_ENV", "development").lower()
 ROOT_PATH = os.getenv("SOFTWARE_ROOT_PATH", "")
 JWT_SECRET = os.getenv("SOFTWARE_JWT_SECRET") or os.getenv("JWT_SECRET") or "software-local-development-secret-change-me"
@@ -336,7 +336,40 @@ def generate_api_key() -> Dict[str, str]:
         "api_key": raw_key,
         "key_hash": hash_api_key(raw_key),
         "key_prefix": raw_key[:14],
+        "key_suffix": raw_key[-4:],
     }
+
+
+def public_api_key(row: sqlite3.Row | Dict[str, Any]) -> Dict[str, Any]:
+    """Return only non-secret API-key metadata suitable for browser responses."""
+    values = row_to_dict(row) if isinstance(row, sqlite3.Row) else row
+    is_active = bool(values.get("is_active"))
+    suffix = str(values.get("key_suffix") or "")
+    return {
+        "id": values["id"],
+        "project_id": values["project_id"],
+        "key_prefix": values["key_prefix"],
+        "masked_key": f'{values["key_prefix"]}{chr(0x2022) * 8}{suffix or (chr(0x2022) * 4)}',
+        "created_at": values["created_at"],
+        "last_used_at": values.get("last_used_at"),
+        "revoked_at": values.get("revoked_at"),
+        "status": "active" if is_active else "revoked",
+        "is_active": is_active,
+    }
+
+
+def project_api_keys(db: sqlite3.Connection, project_id: str) -> List[Dict[str, Any]]:
+    rows = db.execute(
+        """
+        SELECT id, project_id, key_prefix, key_suffix, created_at, last_used_at,
+               revoked_at, status, is_active
+        FROM api_keys
+        WHERE project_id = ?
+        ORDER BY is_active DESC, created_at DESC
+        """,
+        (project_id,),
+    ).fetchall()
+    return [public_api_key(row) for row in rows]
 
 
 def generate_connection_token() -> Dict[str, str]:
@@ -393,10 +426,10 @@ def bootstrap_dev_identity(db: sqlite3.Connection) -> None:
         db.execute(
             """
             INSERT INTO api_keys (
-                id, user_id, project_id, key_hash, key_prefix,
-                created_at, last_used_at, is_active
+                id, user_id, project_id, key_hash, key_prefix, key_suffix,
+                created_at, last_used_at, revoked_at, status, is_active
             )
-            VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'active', 1)
             """,
             (
                 current_api_key_id,
@@ -404,6 +437,7 @@ def bootstrap_dev_identity(db: sqlite3.Connection) -> None:
                 project_id,
                 key_hash,
                 api_key[:14],
+                api_key[-4:],
                 created_at,
             ),
         )
@@ -1210,8 +1244,11 @@ def _initialize_database() -> None:
                 project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
                 key_hash TEXT NOT NULL UNIQUE,
                 key_prefix TEXT NOT NULL,
+                key_suffix TEXT,
                 created_at TEXT NOT NULL,
                 last_used_at TEXT,
+                revoked_at TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
                 is_active INTEGER NOT NULL DEFAULT 1
             );
 
@@ -1702,6 +1739,13 @@ def _initialize_database() -> None:
         ensure_column(db, "projects", "last_seen_at", "TEXT")
         ensure_column(db, "projects", "archived_at", "TEXT")
         ensure_column(db, "projects", "metadata_json", "TEXT NOT NULL DEFAULT '{}'")
+        ensure_column(db, "api_keys", "key_suffix", "TEXT")
+        ensure_column(db, "api_keys", "revoked_at", "TEXT")
+        ensure_column(db, "api_keys", "status", "TEXT NOT NULL DEFAULT 'active'")
+        db.execute(
+            "UPDATE api_keys SET status = CASE WHEN is_active = 1 THEN 'active' ELSE 'revoked' END "
+            "WHERE status IS NULL OR status NOT IN ('active', 'revoked') OR (is_active = 0 AND status = 'active')"
+        )
         ensure_column(db, "sdk_workflows", "installation_id", "TEXT REFERENCES installations(id) ON DELETE SET NULL")
         ensure_column(db, "sdk_workflows", "session_id", "TEXT")
         ensure_column(db, "sdk_workflows", "app_user_id", "TEXT")
@@ -7589,10 +7633,10 @@ def create_install_api_key(
             replaced_cursor = db.execute(
                 """
                 UPDATE api_keys
-                SET is_active = 0
+                SET is_active = 0, status = 'revoked', revoked_at = ?
                 WHERE user_id = ? AND is_active = 1
                 """,
-                (user["id"],),
+                (created_at, user["id"]),
             )
             replaced_existing_keys = max(0, int(replaced_cursor.rowcount or 0))
             enforce_limit(db, user["id"], "api_keys")
@@ -7601,10 +7645,10 @@ def create_install_api_key(
             db.execute(
                 """
                 INSERT INTO api_keys (
-                    id, user_id, project_id, key_hash, key_prefix,
-                    created_at, last_used_at, is_active
+                    id, user_id, project_id, key_hash, key_prefix, key_suffix,
+                    created_at, last_used_at, revoked_at, status, is_active
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'active', 1)
                 """,
                 (
                     key_id,
@@ -7612,6 +7656,7 @@ def create_install_api_key(
                     project_id,
                     generated["key_hash"],
                     generated["key_prefix"],
+                    generated["key_suffix"],
                     created_at,
                 ),
             )
@@ -7653,7 +7698,11 @@ def create_install_api_key(
             "id": key_id,
             "project_id": project_id,
             "key_prefix": generated["key_prefix"],
+            "masked_key": f'{generated["key_prefix"]}{chr(0x2022) * 8}{generated["key_suffix"]}',
             "created_at": created_at,
+            "last_used_at": None,
+            "revoked_at": None,
+            "status": "active",
             "is_active": True,
             "replaced_existing_keys": replaced_existing_keys,
         },
@@ -7714,6 +7763,7 @@ def create_project(payload: ProjectCreate, user: Dict[str, Any] = Depends(curren
             "status": "offline",
             "environment": payload.environment.strip(),
             "created_at": created_at,
+            "api_keys": [],
         },
     }
 
@@ -7729,6 +7779,7 @@ def list_projects(user: Dict[str, Any] = Depends(current_user)) -> Dict[str, Any
             project["api_key_count"] = int(db.execute(
                 "SELECT COUNT(*) FROM api_keys WHERE project_id = ? AND is_active = 1", (project["id"],)
             ).fetchone()[0])
+            project["api_keys"] = project_api_keys(db, project["id"])
     return {"ok": True, "projects": projects, "current_project": current_project}
 
 
@@ -7764,6 +7815,7 @@ def get_project(project_id: str, user: Dict[str, Any] = Depends(current_user)) -
             "SELECT COUNT(*) FROM sdk_workflows WHERE project_id = ? AND (success = 0 OR status = 'failed')",
             (project_id,),
         ).fetchone()[0])
+        api_keys = project_api_keys(db, project_id)
     return {
         "ok": True, "project": project,
         "workflows": [row_to_dict(row) for row in workflows],
@@ -7771,6 +7823,7 @@ def get_project(project_id: str, user: Dict[str, Any] = Depends(current_user)) -
         "sessions": [row_to_dict(row) for row in sessions],
         "usage": {row["metric_type"]: int(row["total"] or 0) for row in usage},
         "summary": {"failures": failure_count, "human_interventions": 0},
+        "api_keys": api_keys,
         "sdk_workflows": dashboard_sdk_payload([project_id]),
     }
 
@@ -7899,10 +7952,10 @@ def create_project_api_key(
             db.execute(
                 """
                 INSERT INTO api_keys (
-                    id, user_id, project_id, key_hash, key_prefix,
-                    created_at, last_used_at, is_active
+                    id, user_id, project_id, key_hash, key_prefix, key_suffix,
+                    created_at, last_used_at, revoked_at, status, is_active
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'active', 1)
                 """,
                 (
                     key_id,
@@ -7910,6 +7963,7 @@ def create_project_api_key(
                     project_id,
                     generated["key_hash"],
                     generated["key_prefix"],
+                    generated["key_suffix"],
                     created_at,
                 ),
             )
@@ -7936,8 +7990,11 @@ def create_project_api_key(
             "id": key_id,
             "project_id": project_id,
             "key_prefix": generated["key_prefix"],
+            "masked_key": f'{generated["key_prefix"]}{chr(0x2022) * 8}{generated["key_suffix"]}',
             "created_at": created_at,
             "last_used_at": None,
+            "revoked_at": None,
+            "status": "active",
             "is_active": True,
         },
     }
@@ -7963,17 +8020,17 @@ def regenerate_project_api_key(
                 ).fetchone()[0]
             )
             db.execute(
-                "UPDATE api_keys SET is_active = 0 WHERE project_id = ? AND is_active = 1",
-                (project_id,),
+                "UPDATE api_keys SET is_active = 0, status = 'revoked', revoked_at = ? WHERE project_id = ? AND is_active = 1",
+                (created_at, project_id),
             )
             enforce_limit(db, user["id"], "api_keys")
             db.execute(
                 """
                 INSERT INTO api_keys (
-                    id, user_id, project_id, key_hash, key_prefix,
-                    created_at, last_used_at, is_active
+                    id, user_id, project_id, key_hash, key_prefix, key_suffix,
+                    created_at, last_used_at, revoked_at, status, is_active
                 )
-                VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'active', 1)
                 """,
                 (
                     key_id,
@@ -7981,6 +8038,7 @@ def regenerate_project_api_key(
                     project_id,
                     generated["key_hash"],
                     generated["key_prefix"],
+                    generated["key_suffix"],
                     created_at,
                 ),
             )
@@ -8008,8 +8066,11 @@ def regenerate_project_api_key(
             "id": key_id,
             "project_id": project_id,
             "key_prefix": generated["key_prefix"],
+            "masked_key": f'{generated["key_prefix"]}{chr(0x2022) * 8}{generated["key_suffix"]}',
             "created_at": created_at,
             "last_used_at": None,
+            "revoked_at": None,
+            "status": "active",
             "is_active": True,
         },
     }
@@ -8022,14 +8083,15 @@ def list_project_api_keys(project_id: str, user: Dict[str, Any] = Depends(curren
         project_permission_or_404(db, user["id"], project_id, "viewer")
         rows = db.execute(
             """
-            SELECT id, project_id, key_prefix, created_at, last_used_at, is_active
+            SELECT id, project_id, key_prefix, key_suffix, created_at, last_used_at,
+                   revoked_at, status, is_active
             FROM api_keys
             WHERE project_id = ?
             ORDER BY created_at DESC
             """,
             (project_id,),
         ).fetchall()
-    return {"ok": True, "api_keys": [row_to_dict(row) for row in rows]}
+    return {"ok": True, "api_keys": [public_api_key(row) for row in rows]}
 
 
 @app.delete("/api/projects/{project_id}/api-keys/{key_id}")
@@ -8050,7 +8112,10 @@ def delete_project_api_key(
         ).fetchone()
         if not row:
             raise HTTPException(status_code=404, detail="API key not found.")
-        db.execute("UPDATE api_keys SET is_active = 0 WHERE id = ?", (key_id,))
+        db.execute(
+            "UPDATE api_keys SET is_active = 0, status = 'revoked', revoked_at = ? WHERE id = ?",
+            (now_iso(), key_id),
+        )
     return {"ok": True, "deleted": True, "key_id": key_id}
 
 
@@ -8298,9 +8363,9 @@ def sdk_exchange_connection_token(payload: SDKConnectionExchange) -> Dict[str, A
         db.execute(
             """
             INSERT INTO api_keys (
-                id, user_id, project_id, key_hash, key_prefix,
-                created_at, last_used_at, is_active
-            ) VALUES (?, ?, ?, ?, ?, ?, NULL, 1)
+                id, user_id, project_id, key_hash, key_prefix, key_suffix,
+                created_at, last_used_at, revoked_at, status, is_active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, 'active', 1)
             """,
             (
                 api_key_id,
@@ -8308,6 +8373,7 @@ def sdk_exchange_connection_token(payload: SDKConnectionExchange) -> Dict[str, A
                 token_row["project_id"],
                 generated_key["key_hash"],
                 generated_key["key_prefix"],
+                generated_key["key_suffix"],
                 timestamp.isoformat(),
             ),
         )

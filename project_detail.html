@@ -1,14 +1,23 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Project | Matrixs</title><link rel="stylesheet" href="/saas.css?v=20260903a"><link rel="stylesheet" href="/ui.css?v=20260903a"><script src="/ui.js?v=20260903a" defer></script></head>
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Project | Matrixs</title><link rel="stylesheet" href="/saas.css?v=20260905a"><link rel="stylesheet" href="/ui.css?v=20260903a"><script src="/ui.js?v=20260903a" defer></script></head>
 <body data-requires-auth="true" data-matrixs-page="reliability"><main class="shell stack product-page">
-  <a href="/projects">← All projects</a>
-  <section class="panel project-hero"><div><span id="detail-status" class="status-badge">Loading</span><h1 id="detail-name">Project</h1><code id="detail-id"></code><p id="detail-meta" class="muted">Loading project details…</p></div><div class="nav"><button id="make-current" class="secondary">Make current</button><a id="connect-project" class="button" href="/api-keys">Connect</a></div></section>
+  <a href="/projects">&larr; All projects</a>
+  <section class="panel project-hero"><div><span id="detail-status" class="status-badge">Loading</span><h1 id="detail-name">Project</h1><p id="detail-meta" class="muted">Loading project details...</p></div><div class="nav"><button id="make-current" class="secondary">Make current</button><a id="connect-project" class="button" href="/onboarding">Connect</a></div></section>
+  <section class="panel stack" aria-labelledby="project-credentials-title">
+    <div class="credential-id-row"><div><span class="field-label">Project ID</span><code id="detail-id"></code></div><button id="copy-project-id" class="secondary">Copy Project ID</button></div>
+    <div class="credential-heading"><div><span class="field-label">API Keys</span><h2 id="project-credentials-title">Project credentials</h2></div><span class="security-note">Secrets are shown once</span></div>
+    <div id="detail-api-keys"><p class="muted">Loading API keys...</p></div>
+    <div id="detail-raw-key-panel" class="raw-key-panel" hidden><strong>API key created</strong><p>Copy this key now. Matrixs cannot show it again after you leave or reload this page.</p><label class="sr-only" for="detail-raw-key">New API key</label><input id="detail-raw-key" type="password" readonly autocomplete="off" spellcheck="false"><div class="credential-actions"><button id="toggle-detail-key" class="secondary">Show</button><button id="copy-detail-key">Copy API Key</button></div></div>
+    <div id="credential-detail-message" class="message" role="status"></div>
+  </section>
   <nav class="section-tabs" aria-label="Project sections"><a href="#overview">Overview</a><a href="#workflows">Workflows</a><a href="#installations">Installations / Devices</a><a href="#sessions">Users / Sessions</a><a href="#failures">Failures</a><a href="#guardrails">Guardrails</a><a href="#usage">Usage</a><a href="#settings">Settings</a></nav>
   <section id="overview" class="metric-grid"><article class="metric-card"><span>Reliability</span><strong id="metric-reliability">0%</strong></article><article class="metric-card"><span>Workflows</span><strong id="metric-workflows">0</strong></article><article class="metric-card"><span>Failures</span><strong id="metric-failures">0</strong></article><article class="metric-card"><span>Installations</span><strong id="metric-installations">0</strong></article><article class="metric-card"><span>Model calls</span><strong id="metric-models">0</strong></article><article class="metric-card"><span>Tool calls</span><strong id="metric-tools">0</strong></article></section>
-  <section id="workflows" class="panel stack"><h2>Workflows</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Status</th><th>Session / user</th><th>Reliability</th><th>Latency</th><th>Calls</th><th>Started</th></tr></thead><tbody id="detail-workflows"><tr><td colspan="7">Loading…</td></tr></tbody></table></div></section>
-  <section id="installations" class="panel stack"><h2>Installations / Devices</h2><div id="detail-installations" class="card-list"><p>Loading…</p></div></section>
-  <section id="sessions" class="panel stack"><h2>Users / Sessions</h2><div id="detail-sessions" class="card-list"><p>Loading…</p></div></section>
-  <section id="failures" class="panel"><h2>Failures</h2><p id="detail-failures" class="muted">Loading…</p></section>
-  <section id="guardrails" class="panel"><h2>Guardrails</h2><p id="detail-guardrails" class="muted">Loading…</p></section>
+  <section id="workflows" class="panel stack"><h2>Workflows</h2><div class="table-wrap"><table><thead><tr><th>Workflow</th><th>Status</th><th>Session / user</th><th>Reliability</th><th>Latency</th><th>Calls</th><th>Started</th></tr></thead><tbody id="detail-workflows"><tr><td colspan="7">Loading...</td></tr></tbody></table></div></section>
+  <section id="installations" class="panel stack"><h2>Installations / Devices</h2><div id="detail-installations" class="card-list"><p>Loading...</p></div></section>
+  <section id="sessions" class="panel stack"><h2>Users / Sessions</h2><div id="detail-sessions" class="card-list"><p>Loading...</p></div></section>
+  <section id="failures" class="panel"><h2>Failures</h2><p id="detail-failures" class="muted">Loading...</p></section>
+  <section id="guardrails" class="panel"><h2>Guardrails</h2><p id="detail-guardrails" class="muted">Loading...</p></section>
   <section id="usage" class="panel"><h2>Usage</h2><div id="detail-usage" class="usage-grid"></div></section>
   <section id="settings" class="panel stack"><h2>Settings</h2><form id="project-settings" class="project-create-grid"><label>Project name<input name="name" required></label><label>Environment<select name="environment"><option>development</option><option>staging</option><option>production</option></select></label><button type="submit">Save settings</button></form><div id="detail-message" class="message"></div></section>
-</main><script src="/auth.js"></script><script src="/project_detail.js?v=20260903a"></script></body></html>
+</main><script src="/auth.js"></script><script src="/project_detail.js?v=20260905a"></script></body></html>
